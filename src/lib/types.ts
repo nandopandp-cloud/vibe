@@ -19,7 +19,7 @@ export type PublicUser = Omit<User, "passwordHash">;
 export type Artist = {
   id: string;
   name: string;
-  /** Caminho público da foto, ex. /uploads/covers/abc.jpg */
+  /** URL pública da foto no Vercel Blob. */
   image: string | null;
   bio: string;
   monthlyListeners: number;

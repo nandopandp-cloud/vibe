@@ -1,11 +1,8 @@
 import "server-only";
 
-import { promises as fs } from "node:fs";
-import path from "node:path";
+import { del, put } from "@vercel/blob";
 import { randomUUID } from "node:crypto";
 import { parseBuffer } from "music-metadata";
-
-const PUBLIC_DIR = path.join(process.cwd(), "public");
 
 const AUDIO_TYPES: Record<string, string> = {
   "audio/mpeg": ".mp3",
@@ -58,16 +55,24 @@ function sniff(buf: Buffer): "audio" | "image" | null {
   return null;
 }
 
+/**
+ * Grava no Vercel Blob e devolve a URL pública definitiva.
+ * O disco do servidor é efêmero e somente leitura em produção, então
+ * os arquivos enviados precisam viver fora dele.
+ */
 async function save(
   buf: Buffer,
   folder: "audio" | "covers",
   ext: string,
+  contentType: string,
 ): Promise<string> {
-  const dir = path.join(PUBLIC_DIR, "uploads", folder);
-  await fs.mkdir(dir, { recursive: true });
-  const name = `${randomUUID()}${ext}`;
-  await fs.writeFile(path.join(dir, name), buf);
-  return `/uploads/${folder}/${name}`;
+  const { url } = await put(`${folder}/${randomUUID()}${ext}`, buf, {
+    access: "public",
+    contentType,
+    // O nome já é único; sem isto o SDK acrescenta outro sufixo.
+    addRandomSuffix: false,
+  });
+  return url;
 }
 
 /** Grava o áudio e devolve caminho público + duração real lida das tags. */
@@ -100,7 +105,7 @@ export async function saveAudio(
     duration = 0;
   }
 
-  const url = await save(buf, "audio", ext);
+  const url = await save(buf, "audio", ext, file.type);
   return { url, duration };
 }
 
@@ -121,14 +126,14 @@ export async function saveImage(file: File): Promise<string> {
       "Este arquivo não é uma imagem válida. Verifique se não foi apenas renomeado.",
     );
   }
-  return save(buf, "covers", ext);
+  return save(buf, "covers", ext, file.type);
 }
 
-/** Remove um arquivo enviado; ignora se já não existe. */
-export async function removeUpload(publicPath: string | null | undefined) {
-  if (!publicPath?.startsWith("/uploads/")) return;
+/** Remove um arquivo do Blob; ignora se já não existe. */
+export async function removeUpload(url: string | null | undefined) {
+  if (!url?.startsWith("http")) return;
   try {
-    await fs.unlink(path.join(PUBLIC_DIR, publicPath));
+    await del(url);
   } catch {
     /* já removido */
   }

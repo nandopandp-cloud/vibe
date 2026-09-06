@@ -40,9 +40,5 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# Conteúdo enviado pelo Studio e o catálogo local
-/data/sona.json
-/public/uploads/audio/*
-/public/uploads/covers/*
-!/public/uploads/audio/.gitkeep
-!/public/uploads/covers/.gitkeep
+# Catálogo e mídia vivem no Postgres e no Vercel Blob, não no repositório.
+/data/

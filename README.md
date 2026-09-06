@@ -13,11 +13,27 @@ Plataforma de streaming de música com duas áreas:
 
 ```bash
 npm install
-npm run dev       # http://localhost:3000
+vercel link              # conecta ao projeto na Vercel
+vercel env pull .env.local   # traz Postgres e Blob
+npm run dev              # http://localhost:3000
 ```
 
-A biblioteca começa **vazia**. Abra `/studio/upload`, envie um arquivo de áudio
-e a faixa aparece imediatamente para os ouvintes.
+O `.env.local` precisa de `DATABASE_URL` (Postgres) e `BLOB_READ_WRITE_TOKEN`
+(Vercel Blob); em produção defina também `SONA_SESSION_SECRET`.
+
+### Acesso
+
+A plataforma exige login. As contas de demonstração são criadas na primeira
+execução (o bloco que as exibe na tela de login está marcado para remoção
+antes de ir ao ar):
+
+| Papel | E-mail | Senha |
+| --- | --- | --- |
+| Administrador (`admins`) | admins@gmail.com | 12345 |
+| Ouvinte (`user`) | nandopandp@gmail.com | 12345 |
+
+Quem tem papel `admins` acessa o Studio e alimenta o catálogo; `user` só
+consome. Contas criadas pelo cadastro público entram sempre como ouvintes.
 
 Outros comandos:
 
@@ -31,22 +47,37 @@ npx tsc --noEmit             # type-check
 
 ### Dados
 
-O catálogo vive em `data/sona.json`, e os arquivos enviados em
-`public/uploads/{audio,covers}/`. Não há banco nem serviço externo — o objetivo
-é rodar localmente sem configuração.
+Postgres (Neon, via Vercel) para o catálogo e as contas; Vercel Blob para áudio
+e imagens. O disco do servidor é efêmero em produção, então nada é gravado nele.
 
-- `src/lib/db.ts` — leitura, escrita atômica (grava num temporário e renomeia) e
-  uma fila que serializa mutações, para dois uploads simultâneos não se
-  sobrescreverem.
-- `src/lib/storage.ts` — grava os uploads, valida tamanho, extensão **e a
+- `src/lib/db.ts` — o catálogo é um documento JSONB numa linha só (ele é sempre
+  lido inteiro para montar as telas, então uma consulta basta); usuários e
+  curtidas ficam em tabelas próprias, que precisam de unicidade por e-mail e de
+  chave estrangeira. `mutate()` mantém a mesma interface da versão em arquivo:
+  o callback muta o objeto e a função grava o que mudou.
+- `src/lib/storage.ts` — envia ao Blob, valida tamanho, extensão **e a
   assinatura real do arquivo** (um `.txt` renomeado para `.mp3` é recusado), e lê
   a duração da faixa dos metadados.
 - `src/lib/actions.ts` — todas as Server Actions. Cada uma revalida `/` em modo
-  layout, então o que o Studio muda o cliente vê na navegação seguinte.
+  layout, então o que o Studio muda o cliente vê na navegação seguinte. As de
+  catálogo verificam o papel de admin no servidor.
+- `scripts/migrate-to-cloud.mjs` — leva um `data/sona.json` antigo para a nuvem.
 
 `readDb()` chama `connection()` do Next: sem isso as páginas seriam
 pré-renderizadas no build e os ouvintes veriam um catálogo congelado no momento
 do deploy.
+
+### Autenticação
+
+Senhas com `scrypt` e salt por usuário. A sessão é um cookie httpOnly assinado
+com HMAC-SHA256 (30 dias), verificado em tempo constante. `src/proxy.ts` barra
+quem não tem cookie antes da página renderizar; a validação da assinatura
+acontece no servidor, em `currentUser()`.
+
+O papel de admin é verificado **dentro de cada Server Action** do Studio, não
+apenas no redirect da UI — Server Actions são endpoints HTTP públicos. Isso foi
+verificado reproduzindo a action de exclusão com uma sessão de ouvinte: o
+servidor recusa e o catálogo não muda.
 
 ### Player
 
@@ -93,18 +124,26 @@ src/
     client/            shell, player, cards, tela de reprodução
     studio/            formulários, tabelas, editor de letras, gráfico
     Brand, Cover, Icons
+    auth/              telas de login e cadastro
   lib/
-    types, db, storage, actions, utils
-data/sona.json         catálogo (criado no primeiro uso)
-public/uploads/        áudio e imagens enviados
+    types, db, storage, actions, auth, auth-actions, utils
+  proxy.ts             barra rotas sem sessão
+scripts/
+  migrate-to-cloud.mjs migração do formato antigo em arquivo
 ```
+
+O catálogo e as contas ficam no Postgres; áudio e imagens, no Vercel Blob.
 
 ## Limites conhecidos
 
-- Usuário único: as curtidas são globais, não por conta. Não há autenticação — o
-  Studio é aberto a quem tem a URL, o que é adequado para uso local mas precisa
-  de login antes de ir para produção.
-- O armazenamento em arquivo serve bem a um catálogo pequeno; para escalar,
-  `src/lib/db.ts` é a única camada a trocar por um banco de verdade.
-- Uploads ficam em `public/`, servidos diretamente pelo Next. Em produção o
-  natural seria object storage com CDN.
+- Não há recuperação de senha: o link "Esqueceu sua senha?" ainda não faz nada,
+  porque depende de um serviço de e-mail.
+- Os botões de login social (Google/Apple/Spotify) aparecem desabilitados: não
+  há OAuth configurado, e preferi deixá-los inertes a simular um login.
+- Promover alguém a administrador exige alterar o papel direto no banco — não há
+  tela de gestão de usuários.
+- O catálogo é um documento JSONB único: ótimo para o volume atual, já que toda
+  tela lê o acervo inteiro. Passando de alguns milhares de faixas, vale
+  normalizar em tabelas próprias.
+- O bloco de contas de demonstração na tela de login precisa sair antes de um
+  uso real.
