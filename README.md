@@ -5,9 +5,10 @@ Plataforma de streaming de música com duas áreas:
 - **Cliente** (`/`) — onde as pessoas ouvem: home com destaque, biblioteca,
   busca, artistas, álbuns, playlists, curtidas, player global e tela de
   reprodução com letra sincronizada.
-- **Sona Studio** (`/studio`) — onde o catálogo é alimentado: upload de faixas,
-  gestão de artistas, editor de letras sincronizadas, curadoria de playlists,
-  destaques da home e um dashboard de métricas.
+- **Sona Studio** (`/studio`) — onde o catálogo é alimentado: publicação de
+  faixas avulsas ou de álbuns inteiros, gestão de artistas, editor de letras
+  sincronizadas, curadoria de playlists, destaques da home e um dashboard de
+  métricas.
 
 ## Rodando
 
@@ -55,9 +56,15 @@ e imagens. O disco do servidor é efêmero em produção, então nada é gravado
   curtidas ficam em tabelas próprias, que precisam de unicidade por e-mail e de
   chave estrangeira. `mutate()` mantém a mesma interface da versão em arquivo:
   o callback muta o objeto e a função grava o que mudou.
-- `src/lib/storage.ts` — envia ao Blob, valida tamanho, extensão **e a
-  assinatura real do arquivo** (um `.txt` renomeado para `.mp3` é recusado), e lê
-  a duração da faixa dos metadados.
+- `src/app/api/upload/route.ts` — assina tokens para o navegador enviar
+  arquivos **direto ao Blob**. Server Actions têm teto de 4,5 MB de body na
+  Vercel, o que reprovava qualquer música de duração normal com um 413. A rota
+  confere o papel de admin antes de assinar, senão seria um upload aberto.
+- `src/lib/upload-client.ts` — envio com progresso, leitura da duração e a
+  checagem da assinatura real do arquivo (um `.txt` renomeado para `.mp3` é
+  recusado), agora no navegador, já que o arquivo não passa pelo servidor.
+- `src/lib/storage.ts` — usado nas telas que ainda enviam pelo servidor
+  (fotos de artista, capas de playlist), com as mesmas validações.
 - `src/lib/actions.ts` — todas as Server Actions. Cada uma revalida `/` em modo
   layout, então o que o Studio muda o cliente vê na navegação seguinte. As de
   catálogo verificam o papel de admin no servidor.
@@ -89,6 +96,14 @@ controles de mídia do sistema operacional funcionam.
 
 Atalhos: `Espaço` toca/pausa, `Shift+→` e `Shift+←` trocam de faixa. Eles são
 ignorados enquanto se digita num campo.
+
+### Publicando
+
+`/studio/upload` publica uma faixa avulsa. `/studio/album` publica um disco
+inteiro: escolha vários arquivos de uma vez, eles sobem em paralelo com barra
+de progresso, os títulos são extraídos do nome (`03 - Titulo.mp3` vira
+"Titulo") e a ordem pode ser ajustada antes de publicar. As faixas herdam a
+capa do álbum.
 
 ### Letras sincronizadas
 

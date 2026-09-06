@@ -11,6 +11,7 @@ import type { PublicUser } from "@/lib/types";
 const NAV = [
   { href: "/studio", label: "Visão geral", icon: I.Chart, exact: true },
   { href: "/studio/upload", label: "Publicar faixa", icon: I.Upload },
+  { href: "/studio/album", label: "Publicar álbum", icon: I.Album },
   { href: "/studio/catalogo", label: "Catálogo", icon: I.Music },
   { href: "/studio/artistas", label: "Artistas", icon: I.User },
   { href: "/studio/letras", label: "Letras", icon: I.Mic },

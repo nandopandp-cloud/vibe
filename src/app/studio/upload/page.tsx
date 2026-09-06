@@ -12,9 +12,9 @@ export default async function UploadPage() {
     <>
       <StudioHeader
         title="Publicar faixa"
-        description="Envie o áudio, defina os dados e a faixa entra no catálogo do Sona na hora."
+        description="Envie o áudio, defina os dados e a faixa entra no catálogo do Sona na hora. Para um disco inteiro, use Publicar álbum."
       />
-      <UploadForm artists={artists} albums={db.albums} />
+      <UploadForm artists={artists} />
     </>
   );
 }

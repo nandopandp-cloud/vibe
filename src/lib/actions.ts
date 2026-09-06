@@ -5,7 +5,7 @@ import { mutate, newId, readDb } from "./db";
 import { fileField, removeUpload, saveAudio, saveImage, UploadError } from "./storage";
 import { normalizeLyrics, parseTimecode } from "./utils";
 import { currentUser } from "./auth";
-import type { LyricLine } from "./types";
+import type { Database, LyricLine } from "./types";
 
 export type ActionState = { ok: boolean; message: string };
 
@@ -304,6 +304,225 @@ export async function deleteTrack(id: string): Promise<ActionState> {
     if (!removed) return { ok: false, message: "Faixa não encontrada." };
     refresh();
     return { ok: true, message: `“${removed}” removida.` };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Publicação a partir de arquivos já enviados ao Blob                 */
+/* ------------------------------------------------------------------ */
+
+/** Uma faixa já com áudio e capa no Blob. */
+export type PendingTrack = {
+  title: string;
+  audioUrl: string;
+  duration: number;
+  coverUrl?: string | null;
+  /** Posição no álbum; usada para ordenar. */
+  trackNumber?: number;
+};
+
+/** Resolve o artista pelo id ou cria um novo com o nome informado. */
+function resolveArtist(
+  db: Database,
+  artistId: string,
+  newArtistName: string,
+): string {
+  if (artistId) return artistId;
+  const match = db.artists.find(
+    (a) => a.name.toLowerCase() === newArtistName.toLowerCase(),
+  );
+  if (match) return match.id;
+
+  const id = newId();
+  db.artists.push({
+    id,
+    name: newArtistName,
+    image: null,
+    bio: "",
+    monthlyListeners: 0,
+    featured: false,
+    createdAt: new Date().toISOString(),
+  });
+  return id;
+}
+
+/**
+ * Publica uma faixa avulsa cujo áudio já está no Blob.
+ * O arquivo vai do navegador direto para o storage; aqui só registramos.
+ */
+export async function publishTrack(input: {
+  artistId: string;
+  newArtistName: string;
+  genre: string;
+  year: number;
+  track: PendingTrack;
+}): Promise<ActionState> {
+  const denied = await denyIfNotAdmin();
+  if (denied) return denied;
+
+  try {
+    const title = input.track.title.trim();
+    if (!title) return { ok: false, message: "O título da faixa é obrigatório." };
+    if (!input.track.audioUrl) {
+      return { ok: false, message: "O envio do áudio não foi concluído." };
+    }
+    if (!input.artistId && !input.newArtistName.trim()) {
+      return { ok: false, message: "Escolha ou informe um artista." };
+    }
+
+    await mutate((db) => {
+      const artistId = resolveArtist(
+        db,
+        input.artistId,
+        input.newArtistName.trim(),
+      );
+      db.tracks.push({
+        id: newId(),
+        title,
+        artistId,
+        albumId: null,
+        genre: input.genre,
+        year: input.year || new Date().getFullYear(),
+        duration: input.track.duration,
+        audio: input.track.audioUrl,
+        cover: input.track.coverUrl ?? null,
+        lyrics: [],
+        plays: 0,
+        playLog: [],
+        createdAt: new Date().toISOString(),
+      });
+    });
+
+    refresh();
+    return { ok: true, message: `“${title}” publicada.` };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * Publica um álbum inteiro de uma vez: cria o álbum e todas as faixas,
+ * já vinculadas a ele. As faixas herdam a capa do álbum quando não têm
+ * uma própria.
+ */
+export async function publishAlbum(input: {
+  albumTitle: string;
+  artistId: string;
+  newArtistName: string;
+  genre: string;
+  year: number;
+  coverUrl: string | null;
+  tracks: PendingTrack[];
+}): Promise<ActionState> {
+  const denied = await denyIfNotAdmin();
+  if (denied) return denied;
+
+  try {
+    const albumTitle = input.albumTitle.trim();
+    if (!albumTitle) {
+      return { ok: false, message: "O título do álbum é obrigatório." };
+    }
+    if (!input.artistId && !input.newArtistName.trim()) {
+      return { ok: false, message: "Escolha ou informe um artista." };
+    }
+
+    const tracks = input.tracks
+      .filter((t) => t.audioUrl && t.title.trim())
+      .sort((a, b) => (a.trackNumber ?? 0) - (b.trackNumber ?? 0));
+
+    if (tracks.length === 0) {
+      return { ok: false, message: "Adicione ao menos uma faixa ao álbum." };
+    }
+
+    await mutate((db) => {
+      const artistId = resolveArtist(
+        db,
+        input.artistId,
+        input.newArtistName.trim(),
+      );
+      const year = input.year || new Date().getFullYear();
+      const albumId = newId();
+
+      db.albums.push({
+        id: albumId,
+        title: albumTitle,
+        artistId,
+        cover: input.coverUrl,
+        year,
+        createdAt: new Date().toISOString(),
+      });
+
+      // `createdAt` crescente preserva a ordem do disco nas listagens.
+      const base = Date.now();
+      tracks.forEach((t, i) => {
+        db.tracks.push({
+          id: newId(),
+          title: t.title.trim(),
+          artistId,
+          albumId,
+          genre: input.genre,
+          year,
+          duration: t.duration,
+          audio: t.audioUrl,
+          cover: t.coverUrl ?? input.coverUrl,
+          lyrics: [],
+          plays: 0,
+          playLog: [],
+          createdAt: new Date(base + i).toISOString(),
+        });
+      });
+    });
+
+    refresh();
+    return {
+      ok: true,
+      message: `Álbum “${albumTitle}” publicado com ${tracks.length} faixa(s).`,
+    };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+export async function deleteAlbum(id: string): Promise<ActionState> {
+  const denied = await denyIfNotAdmin();
+  if (denied) return denied;
+
+  try {
+    const removed = await mutate((db) => {
+      const album = db.albums.find((a) => a.id === id);
+      if (!album) return null;
+
+      const tracks = db.tracks.filter((t) => t.albumId === id);
+      for (const t of tracks) {
+        void removeUpload(t.audio);
+        if (t.cover !== album.cover) void removeUpload(t.cover);
+      }
+      const ids = new Set(tracks.map((t) => t.id));
+
+      db.tracks = db.tracks.filter((t) => t.albumId !== id);
+      for (const uid of Object.keys(db.liked)) {
+        db.liked[uid] = db.liked[uid].filter((tid) => !ids.has(tid));
+      }
+      for (const p of db.playlists) {
+        p.trackIds = p.trackIds.filter((tid) => !ids.has(tid));
+      }
+      if (db.spotlight.trackId && ids.has(db.spotlight.trackId)) {
+        db.spotlight.trackId = null;
+      }
+      void removeUpload(album.cover);
+      db.albums = db.albums.filter((a) => a.id !== id);
+      return { title: album.title, n: tracks.length };
+    });
+
+    if (!removed) return { ok: false, message: "Álbum não encontrado." };
+    refresh();
+    return {
+      ok: true,
+      message: `Álbum “${removed.title}” e ${removed.n} faixa(s) removidos.`,
+    };
   } catch (e) {
     return fail(e);
   }
