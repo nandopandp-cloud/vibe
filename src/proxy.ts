@@ -32,6 +32,6 @@ export function proxy(req: NextRequest) {
 export const config = {
   // Tudo, menos assets e as rotas internas do Next.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|icon|apple-icon|uploads).*)",
+    "/((?!_next/static|_next/image|favicon.ico|icon|apple-icon|images).*)",
   ],
 };
