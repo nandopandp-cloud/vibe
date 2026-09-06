@@ -1,0 +1,204 @@
+@import "tailwindcss";
+
+/* ============================================================
+   SONA — Design tokens
+   Extraídos das referências de interface (dark-first).
+   ============================================================ */
+
+@theme {
+  /* Superfícies — a sidebar é mais escura que o conteúdo */
+  --color-void: #000000;
+  --color-sidebar: #0a0a0b;
+  --color-canvas: #101012;
+  --color-surface: #17171a;
+  --color-surface-2: #1e1e22;
+  --color-surface-3: #26262b;
+  --color-hairline: #2a2a30;
+
+  /* Texto — três níveis de contraste, como nas referências */
+  --color-ink: #ffffff;
+  --color-ink-2: #a8a8b3;
+  --color-ink-3: #8a8a96;
+
+  /* Acento — verde reservado ao CTA principal e ao estado "tocando" */
+  --color-accent: #1dd760;
+  --color-accent-hover: #35e677;
+  --color-accent-ink: #032b12;
+
+  /* Tons de apoio para capas geradas e gráficos */
+  --color-ember: #f0682f;
+  --color-dusk: #7b5cf0;
+  --color-ocean: #2f8ff0;
+  --color-rose: #f0407f;
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+
+  /* Curva de movimento única para toda a interface */
+  --ease-sona: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--color-void);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overscroll-behavior: none;
+}
+
+/* A logo é um wordmark geométrico e largo; reproduzimos com tracking apertado */
+.wordmark {
+  font-weight: 800;
+  letter-spacing: -0.045em;
+  font-stretch: expanded;
+}
+
+.tagline {
+  font-size: 9px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--color-ink-3);
+}
+
+/* ---------- Scrollbars discretas ---------- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-surface-3) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-surface-3);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #3d3d45;
+  background-clip: content-box;
+}
+
+/* ---------- Range inputs (progresso e volume) ---------- */
+input[type="range"].sona-range {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+input[type="range"].sona-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--track-fill, #fff) var(--track-pct, 0%),
+    var(--color-surface-3) var(--track-pct, 0%)
+  );
+}
+input[type="range"].sona-range::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--track-fill, #fff) var(--track-pct, 0%),
+    var(--color-surface-3) var(--track-pct, 0%)
+  );
+}
+input[type="range"].sona-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 12px;
+  width: 12px;
+  border-radius: 999px;
+  background: #fff;
+  margin-top: -4px;
+  opacity: 0;
+  transition: opacity 0.15s var(--ease-sona);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+}
+input[type="range"].sona-range::-moz-range-thumb {
+  height: 12px;
+  width: 12px;
+  border: none;
+  border-radius: 999px;
+  background: #fff;
+  opacity: 0;
+  transition: opacity 0.15s var(--ease-sona);
+}
+input[type="range"].sona-range:hover::-webkit-slider-thumb,
+input[type="range"].sona-range:focus-visible::-webkit-slider-thumb {
+  opacity: 1;
+}
+input[type="range"].sona-range:hover::-moz-range-thumb,
+input[type="range"].sona-range:focus-visible::-moz-range-thumb {
+  opacity: 1;
+}
+
+/* ---------- Animações ---------- */
+@keyframes sona-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-rise {
+  animation: sona-rise 0.45s var(--ease-sona) both;
+}
+
+@keyframes sona-bar {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes sona-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+.shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.05),
+    transparent
+  );
+  animation: sona-shimmer 1.6s infinite;
+}
+
+/* Foco visível e consistente */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
