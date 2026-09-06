@@ -486,6 +486,153 @@ export async function publishAlbum(input: {
   }
 }
 
+
+/** Faixa já existente no álbum, como o editor a devolve. */
+export type ExistingTrack = {
+  id: string;
+  title: string;
+  /** Nova posição no disco. */
+  trackNumber: number;
+};
+
+/**
+ * Salva a edição de um álbum numa operação: metadados, ordem e títulos
+ * das faixas atuais, faixas acrescentadas e faixas retiradas.
+ *
+ * Retirar uma faixa do álbum a apaga do catálogo — é o que "remover do
+ * disco" significa aqui, já que ela não existe fora dele.
+ */
+export async function updateAlbum(input: {
+  albumId: string;
+  albumTitle: string;
+  artistId: string;
+  newArtistName: string;
+  genre: string;
+  year: number;
+  /** URL nova da capa, ou null para manter a atual. */
+  coverUrl: string | null;
+  tracks: ExistingTrack[];
+  newTracks: PendingTrack[];
+  removedTrackIds: string[];
+}): Promise<ActionState> {
+  const denied = await denyIfNotAdmin();
+  if (denied) return denied;
+
+  try {
+    const albumTitle = input.albumTitle.trim();
+    if (!albumTitle) {
+      return { ok: false, message: "O título do álbum é obrigatório." };
+    }
+    if (!input.artistId && !input.newArtistName.trim()) {
+      return { ok: false, message: "Escolha ou informe um artista." };
+    }
+    if (
+      input.tracks.length === 0 &&
+      input.newTracks.filter((t) => t.audioUrl && t.title.trim()).length === 0
+    ) {
+      return {
+        ok: false,
+        message: "O álbum precisa ter ao menos uma faixa.",
+      };
+    }
+
+    const res = await mutate((db) => {
+      const album = db.albums.find((a) => a.id === input.albumId);
+      if (!album) return null;
+
+      const artistId = resolveArtist(
+        db,
+        input.artistId,
+        input.newArtistName.trim(),
+      );
+      const year = input.year || album.year;
+      const capaAntiga = album.cover;
+
+      if (input.coverUrl) {
+        album.cover = input.coverUrl;
+        void removeUpload(capaAntiga);
+      }
+      album.title = albumTitle;
+      album.artistId = artistId;
+      album.year = year;
+
+      // --- faixas retiradas: sai do álbum e do catálogo ---
+      const removidas = new Set(input.removedTrackIds);
+      for (const t of db.tracks) {
+        if (!removidas.has(t.id)) continue;
+        void removeUpload(t.audio);
+        // A capa herdada do álbum é compartilhada; só apaga a própria.
+        if (t.cover && t.cover !== capaAntiga && t.cover !== album.cover) {
+          void removeUpload(t.cover);
+        }
+      }
+      db.tracks = db.tracks.filter((t) => !removidas.has(t.id));
+      for (const uid of Object.keys(db.liked)) {
+        db.liked[uid] = db.liked[uid].filter((id) => !removidas.has(id));
+      }
+      for (const p of db.playlists) {
+        p.trackIds = p.trackIds.filter((id) => !removidas.has(id));
+      }
+      if (db.spotlight.trackId && removidas.has(db.spotlight.trackId)) {
+        db.spotlight.trackId = null;
+      }
+
+      // `createdAt` crescente é o que ordena as faixas na página do álbum.
+      const base = Date.parse(album.createdAt) || Date.now();
+
+      // --- faixas mantidas: título, ordem e metadados herdados ---
+      for (const edit of input.tracks) {
+        const track = db.tracks.find((t) => t.id === edit.id);
+        if (!track || track.albumId !== album.id) continue;
+        track.title = edit.title.trim() || track.title;
+        track.artistId = artistId;
+        track.genre = input.genre;
+        track.year = year;
+        if (input.coverUrl && track.cover === capaAntiga) {
+          track.cover = input.coverUrl;
+        }
+        track.createdAt = new Date(base + edit.trackNumber).toISOString();
+      }
+
+      // --- faixas acrescentadas ---
+      const novas = input.newTracks.filter((t) => t.audioUrl && t.title.trim());
+      for (const t of novas) {
+        db.tracks.push({
+          id: newId(),
+          title: t.title.trim(),
+          artistId,
+          albumId: album.id,
+          genre: input.genre,
+          year,
+          duration: t.duration,
+          audio: t.audioUrl,
+          cover: t.coverUrl ?? album.cover,
+          lyrics: [],
+          plays: 0,
+          playLog: [],
+          createdAt: new Date(base + (t.trackNumber ?? 0)).toISOString(),
+        });
+      }
+
+      return {
+        title: albumTitle,
+        novas: novas.length,
+        removidas: removidas.size,
+      };
+    });
+
+    if (!res) return { ok: false, message: "Álbum não encontrado." };
+    refresh();
+
+    const partes = [`Álbum “${res.title}” atualizado`];
+    if (res.novas) partes.push(`${res.novas} faixa(s) adicionada(s)`);
+    if (res.removidas) partes.push(`${res.removidas} removida(s)`);
+    return { ok: true, message: partes.join(" — ") + "." };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 export async function deleteAlbum(id: string): Promise<ActionState> {
   const denied = await denyIfNotAdmin();
   if (denied) return denied;

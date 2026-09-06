@@ -99,11 +99,17 @@ ignorados enquanto se digita num campo.
 
 ### Publicando
 
-`/studio/upload` publica uma faixa avulsa. `/studio/album` publica um disco
-inteiro: escolha vários arquivos de uma vez, eles sobem em paralelo com barra
-de progresso, os títulos são extraídos do nome (`03 - Titulo.mp3` vira
+`/studio/upload` publica uma faixa avulsa. `/studio/album/novo` publica um
+disco inteiro: escolha vários arquivos de uma vez, eles sobem em paralelo com
+barra de progresso, os títulos são extraídos do nome (`03 - Titulo.mp3` vira
 "Titulo") e a ordem pode ser ajustada antes de publicar. As faixas herdam a
 capa do álbum.
+
+`/studio/album` lista os discos publicados e `/studio/album/[id]` abre a
+edição: renomear o álbum ou as faixas, reordenar, trocar a capa, acrescentar
+faixas novas e remover as que não devem mais aparecer — tudo salvo numa única
+operação. Retirar uma faixa do disco a apaga do catálogo (ela não existe fora
+dele), e o editor avisa disso antes de salvar.
 
 ### Letras sincronizadas
 

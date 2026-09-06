@@ -1,7 +1,12 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
-import { publishAlbum, type ActionState } from "@/lib/actions";
+import { useRouter } from "next/navigation";
+import {
+  publishAlbum,
+  updateAlbum,
+  type ActionState,
+} from "@/lib/actions";
 import { BlobDrop, type UploadedFile } from "./BlobDrop";
 import { GENRES } from "./UploadForm";
 import { Button, Card, Field, FormMessage, Input, Select } from "./Form";
@@ -14,14 +19,30 @@ import { cx, formatTime } from "@/lib/utils";
 import * as I from "../Icons";
 import type { Artist } from "@/lib/types";
 
+/**
+ * Uma linha da lista de faixas. `id` presente = faixa que já está no
+ * catálogo; ausente = arquivo recém-enviado, ainda por publicar.
+ */
 type Faixa = {
   key: string;
+  id?: string;
   title: string;
   fileName: string;
   url: string | null;
   duration: number;
   progresso: number;
   erro: string;
+};
+
+/** Estado inicial ao editar um álbum existente. */
+export type AlbumEdicao = {
+  id: string;
+  title: string;
+  artistId: string;
+  genre: string;
+  year: number;
+  cover: string | null;
+  tracks: { id: string; title: string; duration: number }[];
 };
 
 let seq = 0;
@@ -35,22 +56,50 @@ function tituloDoArquivo(name: string): string {
     .trim();
 }
 
-export function AlbumForm({ artists }: { artists: Artist[] }) {
+export function AlbumForm({
+  artists,
+  album,
+}: {
+  artists: Artist[];
+  /** Ausente = publicar um álbum novo. */
+  album?: AlbumEdicao;
+}) {
+  const editando = Boolean(album);
+  const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<ActionState | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const [albumTitle, setAlbumTitle] = useState("");
-  const [artistId, setArtistId] = useState(artists[0]?.id ?? "");
+  const [albumTitle, setAlbumTitle] = useState(album?.title ?? "");
+  const [artistId, setArtistId] = useState(
+    album?.artistId ?? artists[0]?.id ?? "",
+  );
   const [newArtistName, setNewArtistName] = useState("");
-  const [genre, setGenre] = useState("");
-  const [year, setYear] = useState(String(new Date().getFullYear()));
+  const [genre, setGenre] = useState(album?.genre ?? "");
+  const [year, setYear] = useState(
+    String(album?.year ?? new Date().getFullYear()),
+  );
   const [cover, setCover] = useState<UploadedFile | null>(null);
-  const [faixas, setFaixas] = useState<Faixa[]>([]);
+  const [faixas, setFaixas] = useState<Faixa[]>(
+    album
+      ? album.tracks.map((t) => ({
+          key: novaKey(),
+          id: t.id,
+          title: t.title,
+          fileName: "",
+          url: "existente",
+          duration: t.duration,
+          progresso: 100,
+          erro: "",
+        }))
+      : [],
+  );
+  /** Faixas do disco que o curador retirou nesta sessão de edição. */
+  const [removidas, setRemovidas] = useState<string[]>([]);
 
   const enviando = faixas.some((f) => !f.url && !f.erro);
   const prontas = faixas.filter((f) => f.url);
-  const podePublicar =
+  const podeSalvar =
     albumTitle.trim() !== "" &&
     prontas.length > 0 &&
     !enviando &&
@@ -112,26 +161,65 @@ export function AlbumForm({ artists }: { artists: Artist[] }) {
       return next;
     });
 
-  function publicar() {
+  function remover(f: Faixa) {
+    setFaixas((prev) => prev.filter((x) => x.key !== f.key));
+    // Faixa que já estava publicada precisa ser apagada no servidor.
+    if (f.id) setRemovidas((prev) => [...prev, f.id as string]);
+  }
+
+  function salvar() {
     start(async () => {
-      const res = await publishAlbum({
-        albumTitle,
-        artistId,
-        newArtistName,
-        genre,
-        year: Number(year),
-        coverUrl: cover?.url ?? null,
-        tracks: faixas
-          .filter((f) => f.url)
-          .map((f, i) => ({
-            title: f.title,
-            audioUrl: f.url as string,
-            duration: f.duration,
-            trackNumber: i + 1,
-          })),
-      });
+      const publicadas = faixas.filter((f) => f.url);
+
+      const res = album
+        ? await updateAlbum({
+            albumId: album.id,
+            albumTitle,
+            artistId,
+            newArtistName,
+            genre,
+            year: Number(year),
+            coverUrl: cover?.url ?? null,
+            tracks: publicadas
+              .filter((f) => f.id)
+              .map((f) => ({
+                id: f.id as string,
+                title: f.title,
+                trackNumber: faixas.indexOf(f) + 1,
+              })),
+            newTracks: publicadas
+              .filter((f) => !f.id)
+              .map((f) => ({
+                title: f.title,
+                audioUrl: f.url as string,
+                duration: f.duration,
+                trackNumber: faixas.indexOf(f) + 1,
+              })),
+            removedTrackIds: removidas,
+          })
+        : await publishAlbum({
+            albumTitle,
+            artistId,
+            newArtistName,
+            genre,
+            year: Number(year),
+            coverUrl: cover?.url ?? null,
+            tracks: publicadas.map((f, i) => ({
+              title: f.title,
+              audioUrl: f.url as string,
+              duration: f.duration,
+              trackNumber: i + 1,
+            })),
+          });
+
       setMsg(res);
-      if (res.ok) {
+      if (!res.ok) return;
+
+      if (editando) {
+        setRemovidas([]);
+        setCover(null);
+        router.refresh();
+      } else {
         setAlbumTitle("");
         setFaixas([]);
         setCover(null);
@@ -148,9 +236,22 @@ export function AlbumForm({ artists }: { artists: Artist[] }) {
 
       <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
         <Card title="Capa do álbum" className="h-fit">
+          {album?.cover && !cover && (
+            <div className="mb-4">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={album.cover}
+                alt={`Capa atual de ${album.title}`}
+                className="aspect-square w-full rounded-lg object-cover"
+              />
+              <p className="mt-2 text-xs text-ink-3">
+                Capa atual — envie outra abaixo para substituir.
+              </p>
+            </div>
+          )}
           <BlobDrop
             folder="covers"
-            label="Arte"
+            label={album?.cover ? "Trocar arte" : "Arte"}
             accept="image/*"
             hint="JPG, PNG ou WebP — quadrada"
             preview="image"
@@ -224,7 +325,11 @@ export function AlbumForm({ artists }: { artists: Artist[] }) {
 
       <Card
         title="Faixas"
-        description="Escolha vários arquivos de uma vez. Eles são enviados em paralelo e ordenados pelo nome; o título vem do arquivo e pode ser corrigido."
+        description={
+          editando
+            ? "Renomeie, reordene ou remova as faixas do disco — e acrescente novas pelo campo abaixo."
+            : "Escolha vários arquivos de uma vez. Eles são enviados em paralelo e ordenados pelo nome; o título vem do arquivo e pode ser corrigido."
+        }
       >
         <div
           onDragOver={(e) => e.preventDefault()}
@@ -239,7 +344,7 @@ export function AlbumForm({ artists }: { artists: Artist[] }) {
             <I.Upload className="h-5 w-5" />
           </span>
           <span className="text-sm text-ink-2">
-            Arraste as faixas do álbum ou{" "}
+            {editando ? "Adicionar faixas ao álbum" : "Arraste as faixas do álbum"} ou{" "}
             <span className="font-medium text-ink underline underline-offset-2">
               escolha do computador
             </span>
@@ -286,8 +391,14 @@ export function AlbumForm({ artists }: { artists: Artist[] }) {
                   {f.erro ? (
                     <p className="mt-0.5 text-xs text-rose">{f.erro}</p>
                   ) : f.url ? (
-                    <p className="mt-0.5 truncate text-xs text-ink-3">
-                      {f.fileName} • {formatTime(f.duration)}
+                    <p className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-ink-3">
+                      {f.id ? (
+                        <span className="text-ink-2">no álbum</span>
+                      ) : (
+                        <span className="text-accent">nova</span>
+                      )}
+                      {f.fileName && <>• {f.fileName}</>}
+                      {f.duration > 0 && <>• {formatTime(f.duration)}</>}
                     </p>
                   ) : (
                     <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-surface-3">
@@ -300,7 +411,7 @@ export function AlbumForm({ artists }: { artists: Artist[] }) {
                 </div>
 
                 <span className="flex items-center">
-                  {f.url && (
+                  {f.url && !f.id && (
                     <I.Check className="mr-1 h-4 w-4 text-accent" />
                   )}
                   <button
@@ -323,9 +434,7 @@ export function AlbumForm({ artists }: { artists: Artist[] }) {
                   </button>
                   <button
                     type="button"
-                    onClick={() =>
-                      setFaixas((prev) => prev.filter((x) => x.key !== f.key))
-                    }
+                    onClick={() => remover(f)}
                     className="rounded p-1 text-ink-2 hover:text-rose"
                     aria-label={`Remover faixa ${i + 1}`}
                   >
@@ -336,14 +445,25 @@ export function AlbumForm({ artists }: { artists: Artist[] }) {
             ))}
           </ul>
         )}
+
+        {removidas.length > 0 && (
+          <p className="mt-4 flex items-center gap-2 rounded-lg border border-rose/30 bg-rose/5 px-3 py-2.5 text-xs text-ink-2">
+            <I.Trash className="h-4 w-4 shrink-0 text-rose" />
+            {removidas.length} faixa(s) serão apagadas do catálogo ao salvar.
+          </p>
+        )}
       </Card>
 
       <div className="flex flex-wrap items-center gap-3">
-        <Button onClick={publicar} disabled={!podePublicar || pending}>
+        <Button onClick={salvar} disabled={!podeSalvar || pending}>
           {pending && (
             <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-accent-ink/30 border-t-accent-ink" />
           )}
-          {pending ? "Publicando…" : "Publicar álbum"}
+          {pending
+            ? "Salvando…"
+            : editando
+              ? "Salvar alterações"
+              : "Publicar álbum"}
         </Button>
         <p className="text-xs text-ink-3">
           {enviando
