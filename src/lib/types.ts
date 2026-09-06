@@ -1,5 +1,21 @@
 /** Modelo de domínio do Sona. */
 
+/** `admins` alimenta o catálogo; `user` apenas consome. */
+export type Role = "admins" | "user";
+
+export type User = {
+  id: string;
+  email: string;
+  name: string;
+  role: Role;
+  /** scrypt: "<salt hex>:<hash hex>" — nunca a senha em texto. */
+  passwordHash: string;
+  createdAt: string;
+};
+
+/** O que a UI pode ver — sem o hash. */
+export type PublicUser = Omit<User, "passwordHash">;
+
 export type Artist = {
   id: string;
   name: string;
@@ -64,16 +80,18 @@ export type Spotlight = {
 };
 
 export type Database = {
+  users: User[];
   artists: Artist[];
   albums: Album[];
   tracks: Track[];
   playlists: Playlist[];
   spotlight: Spotlight;
-  /** Faixas curtidas pelo ouvinte (demo de usuário único). */
-  liked: string[];
+  /** Faixas curtidas, por id de usuário. */
+  liked: Record<string, string[]>;
 };
 
 export const EMPTY_DB: Database = {
+  users: [],
   artists: [],
   albums: [],
   tracks: [],
@@ -84,7 +102,7 @@ export const EMPTY_DB: Database = {
     blurb: "",
     quote: "Às vezes, as melhores músicas voltam pra gente.",
   },
-  liked: [],
+  liked: {},
 };
 
 /** Faixa com artista e álbum resolvidos — o que a UI consome. */

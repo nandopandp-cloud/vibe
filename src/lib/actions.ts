@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { mutate, newId, readDb } from "./db";
 import { fileField, removeUpload, saveAudio, saveImage, UploadError } from "./storage";
 import { normalizeLyrics, parseTimecode } from "./utils";
+import { currentUser } from "./auth";
 import type { LyricLine } from "./types";
 
 export type ActionState = { ok: boolean; message: string };
@@ -21,6 +22,20 @@ function fail(e: unknown): ActionState {
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? "").trim();
 
+/**
+ * Barreira de permissão do Studio. As páginas já redirecionam quem não é
+ * admin, mas Server Actions são endpoints públicos: sem esta checagem,
+ * qualquer pessoa poderia invocá-las diretamente.
+ */
+async function denyIfNotAdmin(): Promise<ActionState | null> {
+  const user = await currentUser();
+  if (!user) return { ok: false, message: "Faça login para continuar." };
+  if (user.role !== "admins") {
+    return { ok: false, message: "Apenas administradores podem fazer isso." };
+  }
+  return null;
+}
+
 /* ------------------------------------------------------------------ */
 /* Artistas                                                            */
 /* ------------------------------------------------------------------ */
@@ -29,6 +44,9 @@ export async function createArtist(
   _prev: ActionState | null,
   form: FormData,
 ): Promise<ActionState> {
+  const denied = await denyIfNotAdmin();
+  if (denied) return denied;
+
   try {
     const name = str(form, "name");
     if (!name) return { ok: false, message: "O nome do artista é obrigatório." };
@@ -68,6 +86,9 @@ export async function updateArtist(
   _prev: ActionState | null,
   form: FormData,
 ): Promise<ActionState> {
+  const denied = await denyIfNotAdmin();
+  if (denied) return denied;
+
   try {
     const id = str(form, "id");
     const photo = fileField(form, "image");
@@ -97,6 +118,9 @@ export async function updateArtist(
 }
 
 export async function deleteArtist(id: string): Promise<ActionState> {
+  const denied = await denyIfNotAdmin();
+  if (denied) return denied;
+
   try {
     const removed = await mutate((db) => {
       const artist = db.artists.find((a) => a.id === id);
@@ -112,7 +136,10 @@ export async function deleteArtist(id: string): Promise<ActionState> {
 
       db.tracks = db.tracks.filter((t) => t.artistId !== id);
       db.albums = db.albums.filter((al) => al.artistId !== id);
-      db.liked = db.liked.filter((tid) => !orphanIds.has(tid));
+      // As curtidas são por usuário: limpa as faixas órfãs em todos.
+      for (const uid of Object.keys(db.liked)) {
+        db.liked[uid] = db.liked[uid].filter((tid) => !orphanIds.has(tid));
+      }
       for (const p of db.playlists) {
         p.trackIds = p.trackIds.filter((tid) => !orphanIds.has(tid));
       }
@@ -145,6 +172,9 @@ export async function createTrack(
   _prev: ActionState | null,
   form: FormData,
 ): Promise<ActionState> {
+  const denied = await denyIfNotAdmin();
+  if (denied) return denied;
+
   try {
     const title = str(form, "title");
     if (!title) return { ok: false, message: "O título da faixa é obrigatório." };
@@ -212,6 +242,9 @@ export async function updateTrack(
   _prev: ActionState | null,
   form: FormData,
 ): Promise<ActionState> {
+  const denied = await denyIfNotAdmin();
+  if (denied) return denied;
+
   try {
     const id = str(form, "id");
     const coverFile = fileField(form, "cover");
@@ -248,6 +281,9 @@ export async function updateTrack(
 }
 
 export async function deleteTrack(id: string): Promise<ActionState> {
+  const denied = await denyIfNotAdmin();
+  if (denied) return denied;
+
   try {
     const removed = await mutate((db) => {
       const track = db.tracks.find((t) => t.id === id);
@@ -255,7 +291,9 @@ export async function deleteTrack(id: string): Promise<ActionState> {
       void removeUpload(track.audio);
       void removeUpload(track.cover);
       db.tracks = db.tracks.filter((t) => t.id !== id);
-      db.liked = db.liked.filter((tid) => tid !== id);
+      for (const uid of Object.keys(db.liked)) {
+        db.liked[uid] = db.liked[uid].filter((tid) => tid !== id);
+      }
       for (const p of db.playlists) {
         p.trackIds = p.trackIds.filter((tid) => tid !== id);
       }
@@ -279,6 +317,9 @@ export async function saveLyrics(
   trackId: string,
   lines: LyricLine[],
 ): Promise<ActionState> {
+  const denied = await denyIfNotAdmin();
+  if (denied) return denied;
+
   try {
     const clean = normalizeLyrics(
       lines.map((l) => ({ time: Math.max(0, l.time), text: l.text.trim() })),
@@ -331,6 +372,9 @@ export async function createPlaylist(
   _prev: ActionState | null,
   form: FormData,
 ): Promise<ActionState> {
+  const denied = await denyIfNotAdmin();
+  if (denied) return denied;
+
   try {
     const title = str(form, "title");
     if (!title) return { ok: false, message: "Dê um nome à playlist." };
@@ -357,6 +401,9 @@ export async function createPlaylist(
 }
 
 export async function deletePlaylist(id: string): Promise<ActionState> {
+  const denied = await denyIfNotAdmin();
+  if (denied) return denied;
+
   try {
     const removed = await mutate((db) => {
       const p = db.playlists.find((x) => x.id === id);
@@ -378,6 +425,9 @@ export async function togglePlaylistTrack(
   playlistId: string,
   trackId: string,
 ): Promise<ActionState> {
+  const denied = await denyIfNotAdmin();
+  if (denied) return denied;
+
   try {
     const res = await mutate((db) => {
       const p = db.playlists.find((x) => x.id === playlistId);
@@ -399,6 +449,9 @@ export async function reorderPlaylist(
   playlistId: string,
   trackIds: string[],
 ): Promise<ActionState> {
+  const denied = await denyIfNotAdmin();
+  if (denied) return denied;
+
   try {
     await mutate((db) => {
       const p = db.playlists.find((x) => x.id === playlistId);
@@ -415,6 +468,9 @@ export async function updateSpotlight(
   _prev: ActionState | null,
   form: FormData,
 ): Promise<ActionState> {
+  const denied = await denyIfNotAdmin();
+  if (denied) return denied;
+
   try {
     await mutate((db) => {
       db.spotlight = {
@@ -432,6 +488,9 @@ export async function updateSpotlight(
 }
 
 export async function toggleArtistFeatured(id: string): Promise<ActionState> {
+  const denied = await denyIfNotAdmin();
+  if (denied) return denied;
+
   try {
     const res = await mutate((db) => {
       const a = db.artists.find((x) => x.id === id);
@@ -456,13 +515,17 @@ export async function toggleArtistFeatured(id: string): Promise<ActionState> {
 
 export async function toggleLike(trackId: string): Promise<ActionState> {
   try {
+    const user = await currentUser();
+    if (!user) return { ok: false, message: "Faça login para curtir músicas." };
+
     const liked = await mutate((db) => {
-      const i = db.liked.indexOf(trackId);
+      const list = (db.liked[user.id] ??= []);
+      const i = list.indexOf(trackId);
       if (i >= 0) {
-        db.liked.splice(i, 1);
+        list.splice(i, 1);
         return false;
       }
-      db.liked.push(trackId);
+      list.push(trackId);
       return true;
     });
     refresh();

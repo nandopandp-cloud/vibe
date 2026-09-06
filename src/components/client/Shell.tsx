@@ -9,7 +9,8 @@ import { Logo } from "../Brand";
 import { Cover } from "../Cover";
 import { cx } from "@/lib/utils";
 import * as I from "../Icons";
-import type { Playlist } from "@/lib/types";
+import type { Playlist, PublicUser } from "@/lib/types";
+import { UserMenu } from "./UserMenu";
 
 const NAV = [
   { href: "/", label: "Início", icon: I.Home, activeIcon: I.HomeFilled },
@@ -55,9 +56,11 @@ function NavLink({
 export function Shell({
   children,
   playlists,
+  user,
 }: {
   children: React.ReactNode;
   playlists: Playlist[];
+  user: PublicUser;
 }) {
   const pathname = usePathname();
   const [nowPlaying, setNowPlaying] = useState(false);
@@ -123,13 +126,15 @@ export function Shell({
                 <p className="text-xs font-medium uppercase tracking-wider text-ink-3">
                   Playlists
                 </p>
-                <Link
-                  href="/studio/playlists"
-                  className="text-ink-3 transition-colors hover:text-ink"
-                  aria-label="Criar playlist no Studio"
-                >
-                  <I.Plus className="h-4 w-4" />
-                </Link>
+                {user.role === "admins" && (
+                  <Link
+                    href="/studio/playlists"
+                    className="text-ink-3 transition-colors hover:text-ink"
+                    aria-label="Criar playlist no Studio"
+                  >
+                    <I.Plus className="h-4 w-4" />
+                  </Link>
+                )}
               </div>
               <ul className="space-y-0.5">
                 {playlists.map((pl) => (
@@ -153,7 +158,7 @@ export function Shell({
           )}
 
           {/* card promocional, como na referência */}
-          <div className="mt-auto p-4">
+          <div className={cx("mt-auto p-4", user.role !== "admins" && "hidden")}>
             <div className="relative overflow-hidden rounded-xl border border-hairline bg-gradient-to-br from-surface-2 to-surface p-4">
               <div
                 className="pointer-events-none absolute -right-6 -top-8 h-24 w-24 rounded-full blur-2xl"
@@ -190,7 +195,7 @@ export function Shell({
 
         {/* ---------------- conteúdo ---------------- */}
         <main className="relative min-w-0 flex-1 overflow-y-auto bg-canvas">
-          <TopBar onMenu={() => setMenuOpen(true)} />
+          <TopBar onMenu={() => setMenuOpen(true)} user={user} />
           {children}
         </main>
       </div>
@@ -201,7 +206,13 @@ export function Shell({
   );
 }
 
-function TopBar({ onMenu }: { onMenu: () => void }) {
+function TopBar({
+  onMenu,
+  user,
+}: {
+  onMenu: () => void;
+  user: PublicUser;
+}) {
   const [q, setQ] = useState("");
 
   return (
@@ -239,18 +250,7 @@ function TopBar({ onMenu }: { onMenu: () => void }) {
         >
           <I.Bell className="h-[20px] w-[20px]" />
         </button>
-        <Link
-          href="/studio"
-          className="flex items-center gap-2 rounded-full bg-surface py-1 pl-1 pr-3 transition-colors hover:bg-surface-2"
-        >
-          <span className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-dusk to-ocean text-xs font-bold text-ink">
-            L
-          </span>
-          <span className="hidden text-sm font-medium text-ink sm:block">
-            Lucas
-          </span>
-          <I.ChevronDown className="hidden h-4 w-4 text-ink-2 sm:block" />
-        </Link>
+        <UserMenu user={user} />
       </div>
     </header>
   );

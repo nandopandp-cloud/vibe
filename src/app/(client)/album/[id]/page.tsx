@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { hydrateAll, readDb } from "@/lib/db";
+import { currentUser } from "@/lib/auth";
 import { TrackList } from "@/components/client/TrackList";
 import { PlayAllButton } from "@/components/client/TrackCard";
 import { PageHeader } from "@/components/client/Section";
@@ -13,6 +14,7 @@ export default async function AlbumPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const user = await currentUser();
   const db = await readDb();
   const album = db.albums.find((a) => a.id === id);
   if (!album) notFound();
@@ -23,6 +25,7 @@ export default async function AlbumPage({
     db.tracks
       .filter((t) => t.albumId === id)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+    user?.id,
   );
   const total = tracks.reduce((s, t) => s + t.duration, 0);
 

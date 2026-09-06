@@ -71,25 +71,49 @@ export const newId = () => randomUUID().slice(0, 8);
 /* Leitura hidratada                                                    */
 /* ------------------------------------------------------------------ */
 
-export function hydrate(db: Database, track: Track): HydratedTrack {
+export function hydrate(
+  db: Database,
+  track: Track,
+  userId?: string | null,
+): HydratedTrack {
   return {
     ...track,
     artist: db.artists.find((a) => a.id === track.artistId) ?? null,
     album: track.albumId
       ? (db.albums.find((al) => al.id === track.albumId) ?? null)
       : null,
-    liked: db.liked.includes(track.id),
+    liked: userId ? (db.liked[userId]?.includes(track.id) ?? false) : false,
   };
 }
 
-export function hydrateAll(db: Database, tracks: Track[]): HydratedTrack[] {
-  return tracks.map((t) => hydrate(db, t));
+export function hydrateAll(
+  db: Database,
+  tracks: Track[],
+  userId?: string | null,
+): HydratedTrack[] {
+  return tracks.map((t) => hydrate(db, t, userId));
 }
 
 /** Faixas mais recentes primeiro. */
-export function recentTracks(db: Database, limit?: number): HydratedTrack[] {
+export function recentTracks(
+  db: Database,
+  userId?: string | null,
+): HydratedTrack[] {
   const sorted = [...db.tracks].sort((a, b) =>
     b.createdAt.localeCompare(a.createdAt),
   );
-  return hydrateAll(db, limit ? sorted.slice(0, limit) : sorted);
+  return hydrateAll(db, sorted, userId);
+}
+
+/** Curtidas de um usuário, na ordem em que foram salvas. */
+export function likedTracks(
+  db: Database,
+  userId: string | null | undefined,
+): HydratedTrack[] {
+  if (!userId) return [];
+  const ids = db.liked[userId] ?? [];
+  const tracks = ids
+    .map((id) => db.tracks.find((t) => t.id === id))
+    .filter((t): t is Track => Boolean(t));
+  return hydrateAll(db, tracks, userId);
 }

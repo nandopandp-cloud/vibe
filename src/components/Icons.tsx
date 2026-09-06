@@ -283,6 +283,69 @@ export const ArrowLeft = (p: P) => (
   </Svg>
 );
 
+
+export const Users = (p: P) => (
+  <Svg {...p}>
+    <circle {...stroke} cx="9.5" cy="8.5" r="3.4" />
+    <path {...stroke} d="M3.5 19.5a6.2 6.2 0 0 1 12 0" />
+    <path {...stroke} d="M16 5.6a3.4 3.4 0 0 1 0 6.6M17.5 14.4a6.2 6.2 0 0 1 3 5.1" />
+  </Svg>
+);
+
+export const Globe = (p: P) => (
+  <Svg {...p}>
+    <circle {...stroke} cx="12" cy="12" r="8.5" />
+    <path {...stroke} d="M3.5 12h17M12 3.5c4.5 5 4.5 12 0 17-4.5-5-4.5-12 0-17Z" />
+  </Svg>
+);
+
+export const Mail = (p: P) => (
+  <Svg {...p}>
+    <rect {...stroke} x="3" y="5.5" width="18" height="13" rx="2" />
+    <path {...stroke} d="m3.8 7 8.2 6 8.2-6" />
+  </Svg>
+);
+
+export const Lock = (p: P) => (
+  <Svg {...p}>
+    <rect {...stroke} x="4.5" y="10.5" width="15" height="9.5" rx="2" />
+    <path {...stroke} d="M8 10.5v-2a4 4 0 0 1 8 0v2" />
+  </Svg>
+);
+
+export const Eye = (p: P) => (
+  <Svg {...p}>
+    <path {...stroke} d="M2.5 12S6 6.5 12 6.5 21.5 12 21.5 12 18 17.5 12 17.5 2.5 12 2.5 12Z" />
+    <circle {...stroke} cx="12" cy="12" r="2.8" />
+  </Svg>
+);
+
+export const EyeOff = (p: P) => (
+  <Svg {...p}>
+    <path {...stroke} d="M9.9 5.1A9.6 9.6 0 0 1 12 4.9c6 0 9.5 5.5 9.5 5.5a17 17 0 0 1-2.7 3.2M6.4 6.7A16.6 16.6 0 0 0 2.5 10.4S6 15.9 12 15.9c1 0 1.9-.15 2.7-.4" />
+    <path {...stroke} d="m4 4 16 16" />
+  </Svg>
+);
+
+export const ArrowRight = (p: P) => (
+  <Svg {...p}>
+    <path {...stroke} d="M5 12h14M13.5 6.5 19 12l-5.5 5.5" />
+  </Svg>
+);
+
+export const Shield = (p: P) => (
+  <Svg {...p}>
+    <path {...stroke} d="M12 3.5 5 6v6c0 4.2 3 7.4 7 8.5 4-1.1 7-4.3 7-8.5V6z" />
+  </Svg>
+);
+
+export const Logout = (p: P) => (
+  <Svg {...p}>
+    <path {...stroke} d="M15 4.5h3.5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H15" />
+    <path {...stroke} d="M11 8.5 14.5 12 11 15.5M14.5 12H4.5" />
+  </Svg>
+);
+
 /** Barrinhas animadas do estado "tocando agora". */
 export function EqualizerBars({ className }: { className?: string }) {
   return (

@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { hydrateAll, readDb } from "@/lib/db";
+import { currentUser } from "@/lib/auth";
 import { TrackList } from "@/components/client/TrackList";
 import { PlayAllButton } from "@/components/client/TrackCard";
 import { Section } from "@/components/client/Section";
@@ -13,6 +14,7 @@ export default async function ArtistPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const user = await currentUser();
   const db = await readDb();
   const artist = db.artists.find((a) => a.id === id);
   if (!artist) notFound();
@@ -22,6 +24,7 @@ export default async function ArtistPage({
     db.tracks
       .filter((t) => t.artistId === id)
       .sort((a, b) => b.plays - a.plays),
+    user?.id,
   );
 
   const albums = db.albums.filter((al) => al.artistId === id);

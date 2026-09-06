@@ -1,4 +1,5 @@
-import { hydrateAll, readDb } from "@/lib/db";
+import { likedTracks, readDb } from "@/lib/db";
+import { currentUser } from "@/lib/auth";
 import { TrackList } from "@/components/client/TrackList";
 import { PlayAllButton } from "@/components/client/TrackCard";
 import { EmptyState, PageHeader } from "@/components/client/Section";
@@ -6,14 +7,9 @@ import { formatTime } from "@/lib/utils";
 import * as I from "@/components/Icons";
 
 export default async function LikedPage() {
+  const user = await currentUser();
   const db = await readDb();
-  // Mantém a ordem em que foram curtidas.
-  const tracks = hydrateAll(
-    db,
-    db.liked
-      .map((id) => db.tracks.find((t) => t.id === id))
-      .filter((t): t is NonNullable<typeof t> => Boolean(t)),
-  );
+  const tracks = likedTracks(db, user?.id);
 
   const total = tracks.reduce((s, t) => s + t.duration, 0);
 
@@ -25,7 +21,7 @@ export default async function LikedPage() {
         meta={
           tracks.length > 0 && (
             <>
-              {tracks.length} faixa(s) • {formatTime(total)}
+              {user?.name} • {tracks.length} faixa(s) • {formatTime(total)}
             </>
           )
         }

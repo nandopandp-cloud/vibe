@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Logo } from "../Brand";
-import { cx } from "@/lib/utils";
+import { cx, initials } from "@/lib/utils";
 import * as I from "../Icons";
+import { logout } from "@/lib/auth-actions";
+import type { PublicUser } from "@/lib/types";
 
 const NAV = [
   { href: "/studio", label: "Visão geral", icon: I.Chart, exact: true },
@@ -16,7 +18,13 @@ const NAV = [
   { href: "/studio/destaques", label: "Destaques", icon: I.Sparkle },
 ];
 
-export function StudioShell({ children }: { children: React.ReactNode }) {
+export function StudioShell({
+  children,
+  user,
+}: {
+  children: React.ReactNode;
+  user: PublicUser;
+}) {
   const pathname = usePathname();
 
   const isActive = (href: string, exact?: boolean) =>
@@ -59,14 +67,40 @@ export function StudioShell({ children }: { children: React.ReactNode }) {
           </ul>
         </nav>
 
-        <div className="border-t border-hairline p-4">
+        <div className="border-t border-hairline p-3">
+          <div className="mb-1 flex items-center gap-3 rounded-lg px-3 py-2.5">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-gradient-to-br from-dusk to-ocean text-xs font-bold text-ink">
+              {initials(user.name)}
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-medium text-ink">
+                {user.name}
+              </span>
+              <span className="flex items-center gap-1 text-[11px] text-accent">
+                <I.Shield className="h-3 w-3" />
+                Administrador
+              </span>
+            </span>
+          </div>
+
           <Link
             href="/"
-            className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-ink-2 transition-colors hover:bg-surface hover:text-ink"
+            className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-ink-2 transition-colors hover:bg-surface hover:text-ink"
           >
             <I.ArrowLeft className="h-[18px] w-[18px]" />
             Ver como ouvinte
           </Link>
+
+          {/* `type="button"` de propósito: com submit, este seria o primeiro
+              botão de envio do documento e poderia ser acionado por engano. */}
+          <button
+            type="button"
+            onClick={() => void logout()}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-ink-2 transition-colors hover:bg-surface hover:text-ink"
+          >
+            <I.Logout className="h-[18px] w-[18px]" />
+            Sair
+          </button>
         </div>
       </aside>
 

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { hydrate, readDb, recentTracks } from "@/lib/db";
+import { currentUser } from "@/lib/auth";
 import { Hero } from "@/components/client/Hero";
 import { ArtistCard, TrackCard } from "@/components/client/TrackCard";
 import { CardGrid, EmptyState, Section } from "@/components/client/Section";
@@ -7,8 +8,9 @@ import { Cover } from "@/components/Cover";
 import * as I from "@/components/Icons";
 
 export default async function HomePage() {
+  const user = await currentUser();
   const db = await readDb();
-  const tracks = recentTracks(db);
+  const tracks = recentTracks(db, user?.id);
 
   if (tracks.length === 0) {
     return (
@@ -93,7 +95,7 @@ export default async function HomePage() {
               const plTracks = pl.trackIds
                 .map((id) => db.tracks.find((t) => t.id === id))
                 .filter((t): t is NonNullable<typeof t> => Boolean(t))
-                .map((t) => hydrate(db, t));
+                .map((t) => hydrate(db, t, user?.id));
               return (
                 <Link key={pl.id} href={`/playlist/${pl.id}`} className="group">
                   <Cover

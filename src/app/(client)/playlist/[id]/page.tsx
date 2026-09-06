@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { hydrateAll, readDb } from "@/lib/db";
+import { currentUser } from "@/lib/auth";
 import { TrackList } from "@/components/client/TrackList";
 import { PlayAllButton } from "@/components/client/TrackCard";
 import { PageHeader } from "@/components/client/Section";
@@ -13,6 +14,7 @@ export default async function PlaylistPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const user = await currentUser();
   const db = await readDb();
   const playlist = db.playlists.find((p) => p.id === id);
   if (!playlist) notFound();
@@ -23,6 +25,7 @@ export default async function PlaylistPage({
     playlist.trackIds
       .map((tid) => db.tracks.find((t) => t.id === tid))
       .filter((t): t is NonNullable<typeof t> => Boolean(t)),
+    user?.id,
   );
 
   const total = tracks.reduce((s, t) => s + t.duration, 0);

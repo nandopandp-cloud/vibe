@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { hydrateAll, readDb } from "@/lib/db";
+import { currentUser } from "@/lib/auth";
 import { TrackList } from "@/components/client/TrackList";
 import { ArtistCard } from "@/components/client/TrackCard";
 import { CardGrid, EmptyState, Section } from "@/components/client/Section";
@@ -14,6 +15,7 @@ export default async function SearchPage({
 }) {
   const { q = "" } = await searchParams;
   const needle = foldText(q.trim());
+  const user = await currentUser();
   const db = await readDb();
 
   // Sem busca ativa, mostramos os gêneros do catálogo como atalhos.
@@ -71,6 +73,7 @@ export default async function SearchPage({
         artistIds.has(t.artistId) ||
         matches(db.artists.find((a) => a.id === t.artistId)?.name),
     ),
+    user?.id,
   );
 
   const playlists = db.playlists.filter(
