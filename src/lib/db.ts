@@ -384,3 +384,44 @@ export function likedTracks(
     .filter((t): t is Track => Boolean(t));
   return hydrateAll(db, tracks, userId);
 }
+
+/**
+ * Capas para o mosaico de uma playlist.
+ *
+ * Percorre as faixas na ordem e recolhe capas distintas, mas dá a vez a
+ * artistas ainda não representados antes de aceitar uma segunda capa do
+ * mesmo — uma playlist de seis músicas de duas bandas rende um mosaico
+ * com as duas, e não quatro capas do mesmo álbum.
+ */
+export function playlistCovers(
+  db: Database,
+  trackIds: string[],
+  limit = 4,
+): string[] {
+  const tracks = trackIds
+    .map((id) => db.tracks.find((t) => t.id === id))
+    .filter((t): t is Track => Boolean(t?.cover));
+
+  const chosen: string[] = [];
+  const seenCover = new Set<string>();
+  const seenArtist = new Set<string>();
+
+  // Primeira passada: um por artista, para o mosaico mostrar variedade.
+  for (const t of tracks) {
+    if (chosen.length >= limit) break;
+    if (seenArtist.has(t.artistId) || seenCover.has(t.cover!)) continue;
+    seenArtist.add(t.artistId);
+    seenCover.add(t.cover!);
+    chosen.push(t.cover!);
+  }
+
+  // Segunda: completa com o que sobrou, se ainda faltar espaço.
+  for (const t of tracks) {
+    if (chosen.length >= limit) break;
+    if (seenCover.has(t.cover!)) continue;
+    seenCover.add(t.cover!);
+    chosen.push(t.cover!);
+  }
+
+  return chosen;
+}

@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { hydrateAll, readDb } from "@/lib/db";
+import { hydrateAll, playlistCovers, readDb } from "@/lib/db";
 import { currentUser } from "@/lib/auth";
 import { TrackList } from "@/components/client/TrackList";
 import { PlayAllButton, ShuffleButton } from "@/components/client/TrackCard";
@@ -60,7 +60,11 @@ export default async function PlaylistPage({
         }
         cover={
           <MosaicCover
-            covers={playlist.cover ? [playlist.cover] : tracks.map((t) => t.cover)}
+            covers={
+              playlist.cover
+                ? [playlist.cover]
+                : playlistCovers(db, playlist.trackIds)
+            }
             seed={playlist.id}
             name={playlist.title}
             rounded="rounded-xl"

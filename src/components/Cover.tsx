@@ -108,13 +108,16 @@ export function MosaicCover({
   className?: string;
   rounded?: string;
 }) {
-  // Distintas: repetir a mesma capa quatro vezes não é um mosaico.
+  // Distintas: a mesma capa repetida quatro vezes não é um mosaico. A
+  // ordem de chegada é preservada, então a capa da primeira faixa fica
+  // sempre no lugar de destaque.
   const unique = [...new Set(covers.filter((c): c is string => Boolean(c)))];
 
-  if (unique.length < 4) {
+  // Sem nenhuma capa, o gradiente com as iniciais.
+  if (unique.length === 0) {
     return (
       <Cover
-        src={unique[0] ?? null}
+        src={null}
         seed={seed}
         name={name}
         rounded={rounded}
@@ -123,23 +126,55 @@ export function MosaicCover({
     );
   }
 
+  // Uma só: ocupa tudo, sem moldura de mosaico.
+  if (unique.length === 1) {
+    return (
+      <Cover
+        src={unique[0]}
+        seed={seed}
+        name={name}
+        rounded={rounded}
+        className={className}
+      />
+    );
+  }
+
+  const shown = unique.slice(0, 4);
+
+  /*
+   * O mosaico cresce com a playlist, em vez de esperar quatro capas para
+   * existir: duas dividem ao meio, três põem a primeira alta à esquerda
+   * com as outras empilhadas, e quatro fecham o grid clássico.
+   */
+  const layout =
+    shown.length === 2
+      ? "grid-cols-2 grid-rows-1"
+      : shown.length === 3
+        ? "grid-cols-2 grid-rows-2"
+        : "grid-cols-2 grid-rows-2";
+
   return (
     <div
       className={cx(
-        "relative grid shrink-0 grid-cols-2 grid-rows-2 overflow-hidden bg-surface-2 select-none",
+        "relative grid shrink-0 overflow-hidden bg-surface-2 select-none",
+        layout,
         rounded,
         className,
       )}
       role="img"
       aria-label={name ? `Capa de ${name}` : undefined}
     >
-      {unique.slice(0, 4).map((src, i) => (
+      {shown.map((src, i) => (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           key={`${src}-${i}`}
           src={src}
           alt=""
-          className="h-full w-full object-cover"
+          // Com três capas, a primeira ocupa a coluna inteira à esquerda.
+          className={cx(
+            "h-full w-full object-cover",
+            shown.length === 3 && i === 0 && "row-span-2",
+          )}
           loading="lazy"
           draggable={false}
         />

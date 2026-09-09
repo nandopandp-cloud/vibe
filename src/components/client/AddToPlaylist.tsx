@@ -38,13 +38,25 @@ export function MyPlaylistsProvider({
 
 export const useMyPlaylists = () => useContext(MyPlaylistsCtx);
 
-/** Menu "Adicionar a" de uma faixa. */
+/**
+ * Menu "Adicionar a" de uma faixa.
+ *
+ * Serve a dois lugares: nas linhas de lista, onde só aparece no hover, e
+ * na barra do player, onde fica sempre visível — ali a faixa que toca é a
+ * que a pessoa quer guardar, e esconder o botão atrás do hover deixava a
+ * ação difícil de achar.
+ */
 export function AddToPlaylistButton({
   trackId,
   className,
+  /** `bar` mantém o botão visível e abre o menu para cima. */
+  variant = "row",
+  label,
 }: {
   trackId: string;
   className?: string;
+  variant?: "row" | "bar";
+  label?: string;
 }) {
   const playlists = useMyPlaylists();
   const [open, setOpen] = useState(false);
@@ -81,11 +93,15 @@ export function AddToPlaylistButton({
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="Adicionar à playlist"
+        aria-label={label ?? "Adicionar à playlist"}
+        title={label ?? "Adicionar à playlist"}
         className={cx(
           "transition-all hover:text-ink",
-          open ? "text-ink opacity-100" : "text-ink-2 opacity-0",
-          "group-hover:opacity-100 focus-visible:opacity-100",
+          open ? "text-ink" : "text-ink-2",
+          variant === "row" &&
+            "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+          variant === "bar" &&
+            "grid h-8 w-8 place-items-center rounded-full",
           className,
         )}
       >
@@ -95,7 +111,12 @@ export function AddToPlaylistButton({
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-[calc(100%+6px)] z-50 w-60 overflow-hidden rounded-xl border border-hairline bg-surface shadow-2xl shadow-black/50"
+          className={cx(
+            "absolute left-0 z-50 w-60 overflow-hidden rounded-xl border border-hairline bg-surface shadow-2xl shadow-black/50",
+            variant === "bar"
+              ? "bottom-[calc(100%+8px)]"
+              : "right-0 left-auto top-[calc(100%+6px)]",
+          )}
         >
           {creating ? (
             <form

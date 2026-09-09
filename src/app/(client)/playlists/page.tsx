@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { readDb } from "@/lib/db";
+import { playlistCovers, readDb } from "@/lib/db";
 import { currentUser } from "@/lib/auth";
 import { CardGrid, Section } from "@/components/client/Section";
 import { CreatePlaylistButton } from "@/components/client/CreatePlaylist";
@@ -43,11 +43,7 @@ export default async function PlaylistsPage() {
     .sort(byTitle);
   const editorial = db.playlists.filter((p) => !p.ownerId).sort(byTitle);
 
-  // As capas do mosaico vêm das faixas da playlist, na ordem em que estão.
-  const coversOf = (p: Playlist) =>
-    p.trackIds
-      .map((tid) => db.tracks.find((t) => t.id === tid)?.cover ?? null)
-      .filter((c): c is string => Boolean(c));
+  const coversOf = (p: Playlist) => playlistCovers(db, p.trackIds);
 
   return (
     <div className="animate-rise px-6 pb-12 pt-2 md:px-8">

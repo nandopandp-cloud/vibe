@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { readDb } from "@/lib/db";
+import { playlistCovers, readDb } from "@/lib/db";
 import { currentUser } from "@/lib/auth";
 import { PlayerProvider } from "@/components/client/PlayerProvider";
 import { MyPlaylistsProvider } from "@/components/client/AddToPlaylist";
@@ -23,9 +23,7 @@ export default async function ClientLayout({
   // playlist leva junto as capas das suas faixas.
   const withCovers = (p: (typeof db.playlists)[number]) => ({
     ...p,
-    trackCovers: p.trackIds
-      .map((tid) => db.tracks.find((t) => t.id === tid)?.cover ?? null)
-      .filter((c): c is string => Boolean(c)),
+    trackCovers: playlistCovers(db, p.trackIds),
   });
 
   // A sidebar mostra as duas famílias: as da casa e as do próprio ouvinte.

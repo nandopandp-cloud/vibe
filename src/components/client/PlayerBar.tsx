@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { usePlayer } from "./PlayerProvider";
 import { DeviceMenu } from "./DeviceMenu";
+import { AddToPlaylistButton } from "./AddToPlaylist";
+import { TrackMenu } from "./TrackMenu";
 import { Cover } from "../Cover";
 import { cx, formatTime } from "@/lib/utils";
 import * as I from "../Icons";
@@ -128,9 +130,12 @@ export function PlayerBar({
                   <I.Heart className="h-[18px] w-[18px]" />
                 )}
               </IconButton>
-              <IconButton className="h-8 w-8" aria-label="Mais opções">
-                <I.Dots className="h-[18px] w-[18px]" />
-              </IconButton>
+              <AddToPlaylistButton
+                trackId={t.id}
+                variant="bar"
+                label="Adicionar a uma playlist"
+              />
+              <TrackMenu track={t} />
             </div>
           </>
         ) : (
