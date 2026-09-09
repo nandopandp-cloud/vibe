@@ -31,6 +31,10 @@ export async function POST(request: Request): Promise<NextResponse> {
             : [
                 "audio/mpeg",
                 "audio/mp3",
+                "audio/mpg",
+                "audio/x-mpeg",
+                // .mpeg/.mpga chegam rotulados como vídeo em alguns sistemas.
+                "video/mpeg",
                 "audio/wav",
                 "audio/x-wav",
                 "audio/ogg",

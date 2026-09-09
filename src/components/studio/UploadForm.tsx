@@ -64,8 +64,8 @@ export function UploadForm({ artists }: { artists: Artist[] }) {
           <BlobDrop
             folder="audio"
             label="Arquivo de áudio"
-            accept="audio/*"
-            hint="MP3, WAV, OGG, FLAC ou M4A — até 60 MB"
+            accept="audio/*,.mpeg,.mpga,.mp3"
+            hint="MP3, MPEG, WAV, OGG, FLAC ou M4A — até 60 MB"
             required
             preview="audio"
             value={audio}

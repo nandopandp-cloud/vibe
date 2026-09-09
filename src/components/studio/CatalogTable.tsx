@@ -72,7 +72,12 @@ function EditRow({
           <Input name="cover" type="file" accept="image/*" className="py-2" />
         </Field>
         <Field label="Substituir áudio" hint="Opcional">
-          <Input name="audio" type="file" accept="audio/*" className="py-2" />
+          <Input
+            name="audio"
+            type="file"
+            accept="audio/*,.mpeg,.mpga,.mp3"
+            className="py-2"
+          />
         </Field>
       </div>
       <div className="flex gap-2">

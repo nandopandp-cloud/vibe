@@ -7,6 +7,11 @@ import { parseBuffer } from "music-metadata";
 const AUDIO_TYPES: Record<string, string> = {
   "audio/mpeg": ".mp3",
   "audio/mp3": ".mp3",
+  // Alguns sistemas rotulam .mpeg/.mpga como vídeo; o conteúdo é o mesmo
+  // fluxo MPEG de áudio e a checagem de assinatura abaixo confirma isso.
+  "audio/mpg": ".mpeg",
+  "audio/x-mpeg": ".mpeg",
+  "video/mpeg": ".mpeg",
   "audio/wav": ".wav",
   "audio/x-wav": ".wav",
   "audio/ogg": ".ogg",
@@ -22,6 +27,35 @@ const IMAGE_TYPES: Record<string, string> = {
   "image/webp": ".webp",
   "image/avif": ".avif",
 };
+
+/** Extensões de áudio aceitas quando o browser não informa o tipo. */
+const AUDIO_EXTS = new Set([
+  ".mp3",
+  ".mpeg",
+  ".mpga",
+  ".wav",
+  ".ogg",
+  ".flac",
+  ".m4a",
+]);
+
+/** Content-type a servir para cada extensão gravada. */
+const AUDIO_CONTENT_TYPE: Record<string, string> = {
+  ".mp3": "audio/mpeg",
+  ".mpeg": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".ogg": "audio/ogg",
+  ".flac": "audio/flac",
+  ".m4a": "audio/mp4",
+};
+
+function extFromName(name: string): string | undefined {
+  const m = /\.[a-z0-9]+$/i.exec(name);
+  const ext = m?.[0].toLowerCase();
+  if (!ext || !AUDIO_EXTS.has(ext)) return undefined;
+  // .mpga é o mesmo fluxo do .mpeg; guardamos com uma extensão só.
+  return ext === ".mpga" ? ".mpeg" : ext;
+}
 
 const MAX_AUDIO = 40 * 1024 * 1024; // 40 MB
 const MAX_IMAGE = 8 * 1024 * 1024; // 8 MB
@@ -79,10 +113,13 @@ async function save(
 export async function saveAudio(
   file: File,
 ): Promise<{ url: string; duration: number }> {
-  const ext = AUDIO_TYPES[file.type];
+  // Quando o browser não conhece a extensão (.mpeg em alguns sistemas) o
+  // `type` vem vazio; nesse caso a extensão do nome decide, e a checagem
+  // de assinatura abaixo é quem de fato garante que é áudio.
+  const ext = AUDIO_TYPES[file.type] ?? extFromName(file.name);
   if (!ext) {
     throw new UploadError(
-      "Formato de áudio não suportado. Use MP3, WAV, OGG, FLAC ou M4A.",
+      "Formato de áudio não suportado. Use MP3, MPEG, WAV, OGG, FLAC ou M4A.",
     );
   }
   if (file.size > MAX_AUDIO) {
@@ -105,7 +142,13 @@ export async function saveAudio(
     duration = 0;
   }
 
-  const url = await save(buf, "audio", ext, file.type);
+  // Um .mpeg pode chegar como video/mpeg ou sem tipo; gravar assim faria
+  // o <audio> recusar a faixa. O fluxo é o mesmo, então normalizamos.
+  const contentType =
+    !file.type || file.type.startsWith("video/")
+      ? (AUDIO_CONTENT_TYPE[ext] ?? "application/octet-stream")
+      : file.type;
+  const url = await save(buf, "audio", ext, contentType);
   return { url, duration };
 }
 

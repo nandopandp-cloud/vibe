@@ -356,7 +356,7 @@ export function AlbumForm({
         <input
           ref={inputRef}
           type="file"
-          accept="audio/*"
+          accept="audio/*,.mpeg,.mpga,.mp3"
           multiple
           className="sr-only"
           onChange={(e) => void adicionar(e.target.files)}

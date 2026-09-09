@@ -3,6 +3,25 @@
 import { upload } from "@vercel/blob/client";
 
 /**
+ * Content-type com que o arquivo deve ser gravado no Blob.
+ *
+ * Um .mpeg/.mpga chega rotulado como video/mpeg em alguns sistemas, e como
+ * string vazia quando o browser não conhece a extensão. Gravado assim, o
+ * Blob serve a faixa como vídeo ou octet-stream e o <audio> recusa tocar.
+ * É o mesmo fluxo MPEG de áudio, então normalizamos para audio/mpeg.
+ */
+function audioContentType(
+  file: File,
+  folder: "audio" | "covers",
+): string | undefined {
+  if (folder !== "audio") return file.type || undefined;
+  const mpegExt = /\.(mpeg|mpga|mpg|mp3)$/i.test(file.name);
+  if (!file.type) return mpegExt ? "audio/mpeg" : undefined;
+  if (file.type.startsWith("video/") || mpegExt) return "audio/mpeg";
+  return file.type;
+}
+
+/**
  * Envia um arquivo do navegador direto ao Vercel Blob e devolve a URL.
  * O servidor só assina o token (`/api/upload`) — o arquivo não passa por
  * ele, contornando o teto de 4,5 MB do body de Server Actions.
@@ -15,6 +34,7 @@ export async function uploadToBlob(
   const result = await upload(`${folder}/${file.name}`, file, {
     access: "public",
     handleUploadUrl: "/api/upload",
+    contentType: audioContentType(file, folder),
     // Arquivos grandes vão em partes paralelas, com retentativa por parte.
     multipart: file.size > 8 * 1024 * 1024,
     onUploadProgress: onProgress
