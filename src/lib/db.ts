@@ -3,6 +3,7 @@ import "server-only";
 import { neon } from "@neondatabase/serverless";
 import { randomUUID } from "node:crypto";
 import { connection } from "next/server";
+import { cache } from "react";
 import {
   EMPTY_DB,
   type Database,
@@ -134,7 +135,12 @@ const toUser = (r: UserRow): User => ({
   createdAt: new Date(r.created_at).toISOString(),
 });
 
-export async function readDb(): Promise<Database> {
+/**
+ * Leitura crua do banco. Use `readDb`, que memoiza esta função por
+ * requisição — o layout e a página pediam o catálogo várias vezes cada,
+ * e cada chamada custava quatro consultas ao Postgres.
+ */
+async function loadDb(): Promise<Database> {
   // O catálogo muda em runtime; sem isto as páginas seriam pré-renderizadas
   // no build e os ouvintes veriam um acervo congelado no deploy.
   await connection();
@@ -177,6 +183,16 @@ export async function readDb(): Promise<Database> {
     following,
   };
 }
+
+/**
+ * O catálogo de uma requisição, lido no máximo uma vez.
+ *
+ * `cache` do React vale só para a requisição em curso: duas navegações
+ * seguidas continuam vendo dados frescos, mas o layout, a página e o
+ * `currentUser` compartilham a mesma leitura em vez de repetirem quatro
+ * consultas cada um.
+ */
+export const readDb = cache(loadDb);
 
 /* ------------------------------------------------------------------ */
 /* Escrita                                                             */

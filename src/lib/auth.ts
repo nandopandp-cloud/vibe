@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import { cookies } from "next/headers";
 import {
   createHmac,
@@ -116,16 +117,22 @@ export function toPublic(user: User): PublicUser {
   return rest;
 }
 
-/** Usuário da requisição atual, ou null se não houver sessão válida. */
-export async function currentUser(): Promise<PublicUser | null> {
-  const jar = await cookies();
-  const userId = readToken(jar.get(COOKIE)?.value);
-  if (!userId) return null;
+/**
+ * Usuário da requisição atual, ou null se não houver sessão válida.
+ * Memoizado por requisição: layout, página e actions perguntam quem é o
+ * usuário várias vezes, e a resposta não muda no meio do render.
+ */
+export const currentUser = cache(
+  async (): Promise<PublicUser | null> => {
+    const jar = await cookies();
+    const userId = readToken(jar.get(COOKIE)?.value);
+    if (!userId) return null;
 
-  const db = await readDb();
-  const user = db.users.find((u) => u.id === userId);
-  return user ? toPublic(user) : null;
-}
+    const db = await readDb();
+    const user = db.users.find((u) => u.id === userId);
+    return user ? toPublic(user) : null;
+  },
+);
 
 export async function isAdmin(): Promise<boolean> {
   return (await currentUser())?.role === "admins";

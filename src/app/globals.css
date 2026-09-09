@@ -50,6 +50,39 @@ body {
   overscroll-behavior: none;
 }
 
+/* ------------------------------------------------------------------
+   Cursores
+
+   O reset do Tailwind v4 deixa `button` com o cursor padrão da página,
+   e não com a mãozinha — o que faz cada ação parecer texto selecionável.
+   Estas regras devolvem o cursor certo a tudo que é clicável, de uma vez,
+   em vez de espalhar `cursor-pointer` por centenas de componentes.
+   ------------------------------------------------------------------ */
+
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+[role="menuitem"],
+label[for],
+summary,
+a[href],
+select,
+input[type="checkbox"],
+input[type="radio"],
+input[type="file"]::file-selector-button {
+  cursor: pointer;
+}
+
+button:disabled,
+[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+/* Campos de texto mantêm o cursor de texto, mesmo dentro de um label. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+textarea {
+  cursor: text;
+}
+
 /* A logo é um wordmark geométrico e largo; reproduzimos com tracking apertado */
 .wordmark {
   font-weight: 800;
