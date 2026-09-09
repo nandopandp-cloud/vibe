@@ -9,7 +9,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Sona — Música sem fronteiras",
+  title: "Sona: música sem fronteiras",
   description:
     "Plataforma de streaming de música: ouça o catálogo e publique suas faixas no Sona Studio.",
 };
