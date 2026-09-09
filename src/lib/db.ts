@@ -32,7 +32,7 @@ if (!DATABASE_URL) {
 const sql = neon(DATABASE_URL);
 
 /** Parte do catálogo que mora no documento JSONB. */
-type CatalogDoc = Omit<Database, "users" | "liked">;
+type CatalogDoc = Omit<Database, "users" | "liked" | "following">;
 
 const EMPTY_CATALOG: CatalogDoc = {
   artists: [],
@@ -87,6 +87,16 @@ function ensureSchema(): Promise<void> {
     await sql`
       CREATE INDEX IF NOT EXISTS likes_user_idx ON likes (user_id, liked_at)`;
     await sql`
+      CREATE TABLE IF NOT EXISTS follows (
+        user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        artist_id   TEXT NOT NULL,
+        followed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (user_id, artist_id)
+      )`;
+    await sql`
+      CREATE INDEX IF NOT EXISTS follows_user_idx
+        ON follows (user_id, followed_at)`;
+    await sql`
       INSERT INTO catalog (id, data)
       VALUES (1, ${JSON.stringify(EMPTY_CATALOG)}::jsonb)
       ON CONFLICT (id) DO NOTHING`;
@@ -130,12 +140,13 @@ export async function readDb(): Promise<Database> {
   await connection();
   await ensureSchema();
 
-  const [catalogRows, userRows, likeRows] = await Promise.all([
+  const [catalogRows, userRows, likeRows, followRows] = await Promise.all([
     sql`SELECT data FROM catalog WHERE id = 1`,
     sql`SELECT id, email, name, role, password_hash, image, google_id,
                created_at
         FROM users ORDER BY created_at`,
     sql`SELECT user_id, track_id FROM likes ORDER BY liked_at`,
+    sql`SELECT user_id, artist_id FROM follows ORDER BY followed_at`,
   ]);
 
   const doc = (catalogRows[0]?.data ?? EMPTY_CATALOG) as Partial<CatalogDoc>;
@@ -145,12 +156,25 @@ export async function readDb(): Promise<Database> {
     (liked[row.user_id] ??= []).push(row.track_id);
   }
 
+  const following: Record<string, string[]> = {};
+  for (const row of followRows as { user_id: string; artist_id: string }[]) {
+    (following[row.user_id] ??= []).push(row.artist_id);
+  }
+
   return {
     ...EMPTY_CATALOG,
     ...doc,
+    // Playlists gravadas antes do recurso de playlist do ouvinte não têm
+    // `ownerId`: são todas da casa.
+    playlists: (doc.playlists ?? []).map((p) => ({
+      ...p,
+      ownerId: p.ownerId ?? null,
+      visibility: p.visibility ?? "public",
+    })),
     spotlight: { ...EMPTY_DB.spotlight, ...(doc.spotlight ?? {}) },
     users: (userRows as UserRow[]).map(toUser),
     liked,
+    following,
   };
 }
 
@@ -172,7 +196,11 @@ export async function mutate<T>(
   await ensureSchema();
   const db = await readDb();
   // Cópia para comparar depois: o callback muta `db` no lugar.
-  const snapshot = structuredClone({ users: db.users, liked: db.liked });
+  const snapshot = structuredClone({
+    users: db.users,
+    liked: db.liked,
+    following: db.following,
+  });
 
   const result = await fn(db);
 
@@ -191,6 +219,7 @@ export async function mutate<T>(
 
   await syncUsers(snapshot.users, db.users);
   await syncLikes(snapshot.liked, db.liked);
+  await syncFollows(snapshot.following, db.following);
 
   return result;
 }
@@ -254,6 +283,34 @@ async function syncLikes(
       if (!next.has(trackId)) {
         await sql`
           DELETE FROM likes WHERE user_id = ${userId} AND track_id = ${trackId}`;
+      }
+    }
+  }
+}
+
+async function syncFollows(
+  before: Record<string, string[]>,
+  after: Record<string, string[]>,
+) {
+  const userIds = new Set([...Object.keys(before), ...Object.keys(after)]);
+
+  for (const userId of userIds) {
+    const prev = new Set(before[userId] ?? []);
+    const next = new Set(after[userId] ?? []);
+
+    for (const artistId of next) {
+      if (!prev.has(artistId)) {
+        await sql`
+          INSERT INTO follows (user_id, artist_id)
+          VALUES (${userId}, ${artistId})
+          ON CONFLICT DO NOTHING`;
+      }
+    }
+    for (const artistId of prev) {
+      if (!next.has(artistId)) {
+        await sql`
+          DELETE FROM follows
+          WHERE user_id = ${userId} AND artist_id = ${artistId}`;
       }
     }
   }

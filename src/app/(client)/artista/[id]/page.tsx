@@ -3,6 +3,7 @@ import { hydrateAll, readDb } from "@/lib/db";
 import { currentUser } from "@/lib/auth";
 import { TrackList } from "@/components/client/TrackList";
 import { PlayAllButton, ShuffleButton } from "@/components/client/TrackCard";
+import { FollowButton } from "@/components/client/FollowButton";
 import { Section } from "@/components/client/Section";
 import { Avatar, Cover } from "@/components/Cover";
 import Link from "next/link";
@@ -28,6 +29,9 @@ export default async function ArtistPage({
   );
 
   const albums = db.albums.filter((al) => al.artistId === id);
+  const isFollowing = user
+    ? (db.following[user.id]?.includes(artist.id) ?? false)
+    : false;
   const totalPlays = tracks.reduce((s, t) => s + t.plays, 0);
 
   return (
@@ -68,6 +72,9 @@ export default async function ArtistPage({
             <div className="mt-6 flex flex-wrap items-center gap-3">
               <PlayAllButton tracks={tracks} />
               <ShuffleButton tracks={tracks} />
+              {user && (
+                <FollowButton artistId={artist.id} following={isFollowing} />
+              )}
             </div>
           </div>
         </div>

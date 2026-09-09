@@ -5,7 +5,8 @@ import { currentUser } from "@/lib/auth";
 import { TrackList } from "@/components/client/TrackList";
 import { PlayAllButton, ShuffleButton } from "@/components/client/TrackCard";
 import { PageHeader } from "@/components/client/Section";
-import { Cover } from "@/components/Cover";
+import { PlaylistOwnerActions } from "@/components/client/PlaylistOwnerActions";
+import { MosaicCover } from "@/components/Cover";
 import { formatTime } from "@/lib/utils";
 
 export default async function PlaylistPage({
@@ -18,6 +19,10 @@ export default async function PlaylistPage({
   const db = await readDb();
   const playlist = db.playlists.find((p) => p.id === id);
   if (!playlist) notFound();
+
+  const isOwner = Boolean(user && playlist.ownerId === user.id);
+  // Privada é privada: para quem não é dono, não existe.
+  if (playlist.visibility === "private" && !isOwner) notFound();
 
   // Preserva a ordem definida na curadoria.
   const tracks = hydrateAll(
@@ -33,7 +38,13 @@ export default async function PlaylistPage({
   return (
     <div className="animate-rise px-6 pb-12 pt-2 md:px-8">
       <PageHeader
-        eyebrow={playlist.editorial ? "Playlist do Sona" : "Playlist"}
+        eyebrow={
+          isOwner
+            ? "Sua playlist"
+            : playlist.ownerId
+              ? "Playlist de ouvinte"
+              : "Playlist do Sona"
+        }
         title={playlist.title}
         meta={
           <>
@@ -44,11 +55,12 @@ export default async function PlaylistPage({
             )}
             {tracks.length} faixa(s)
             {total > 0 && ` • ${formatTime(total)}`}
+            {isOwner && playlist.visibility === "private" && " • Privada"}
           </>
         }
         cover={
-          <Cover
-            src={playlist.cover}
+          <MosaicCover
+            covers={playlist.cover ? [playlist.cover] : tracks.map((t) => t.cover)}
             seed={playlist.id}
             name={playlist.title}
             rounded="rounded-xl"
@@ -58,6 +70,13 @@ export default async function PlaylistPage({
       >
         <PlayAllButton tracks={tracks} />
         <ShuffleButton tracks={tracks} />
+        {isOwner && (
+          <PlaylistOwnerActions
+            playlistId={playlist.id}
+            title={playlist.title}
+            visibility={playlist.visibility}
+          />
+        )}
       </PageHeader>
 
       <div className="mt-8">
@@ -66,12 +85,18 @@ export default async function PlaylistPage({
             <p className="text-sm text-ink-2">
               Esta playlist ainda não tem faixas.
             </p>
-            <Link
-              href="/studio/playlists"
-              className="mt-4 inline-flex items-center rounded-full border border-hairline px-5 py-2.5 text-sm font-medium text-ink transition-colors hover:border-ink-3"
-            >
-              Curar no Studio
-            </Link>
+            {isOwner ? (
+              <p className="mt-1 text-xs text-ink-3">
+                Use o “+” em qualquer faixa para adicioná-la aqui.
+              </p>
+            ) : (
+              <Link
+                href="/studio/playlists"
+                className="mt-4 inline-flex items-center rounded-full border border-hairline px-5 py-2.5 text-sm font-medium text-ink transition-colors hover:border-ink-3"
+              >
+                Curar no Studio
+              </Link>
+            )}
           </div>
         ) : (
           <TrackList tracks={tracks} />

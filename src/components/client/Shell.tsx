@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { PlayerBar } from "./PlayerBar";
 import { NowPlaying } from "./NowPlaying";
 import { Logo } from "../Brand";
-import { Cover } from "../Cover";
+import { MosaicCover } from "../Cover";
 import { cx } from "@/lib/utils";
 import * as I from "../Icons";
 import type { Playlist, PublicUser } from "@/lib/types";
@@ -53,13 +53,35 @@ function NavLink({
   );
 }
 
+/** Playlist da sidebar, já com as capas das faixas para o mosaico. */
+export type SidebarPlaylist = Playlist & { trackCovers: string[] };
+
+function PlaylistLink({ playlist }: { playlist: SidebarPlaylist }) {
+  return (
+    <Link
+      href={`/playlist/${playlist.id}`}
+      className="flex items-center gap-3 rounded-lg px-4 py-2 text-sm text-ink-2 transition-colors hover:bg-surface/60 hover:text-ink"
+    >
+      <MosaicCover
+        covers={playlist.cover ? [playlist.cover] : playlist.trackCovers}
+        seed={playlist.id}
+        name={playlist.title}
+        className="h-9 w-9"
+      />
+      <span className="truncate">{playlist.title}</span>
+    </Link>
+  );
+}
+
 export function Shell({
   children,
   playlists,
+  myPlaylists,
   user,
 }: {
   children: React.ReactNode;
-  playlists: Playlist[];
+  playlists: SidebarPlaylist[];
+  myPlaylists: SidebarPlaylist[];
   user: PublicUser;
 }) {
   const pathname = usePathname();
@@ -119,43 +141,65 @@ export function Shell({
             </ul>
           </div>
 
-          {/* playlists editoriais */}
-          {playlists.length > 0 && (
-            <div className="mt-6 min-h-0 flex-1 overflow-y-auto px-3 pb-4">
-              <div className="flex items-center justify-between px-4 pb-2">
-                <p className="text-xs font-medium uppercase tracking-wider text-ink-3">
+          {/* playlists: as do ouvinte primeiro, depois as da casa */}
+          <div className="mt-6 min-h-0 flex-1 overflow-y-auto px-3 pb-4">
+            <div className="flex items-center justify-between px-4 pb-2">
+              <p className="text-xs font-medium uppercase tracking-wider text-ink-3">
+                Suas playlists
+              </p>
+              <Link
+                href="/playlists"
+                className="text-ink-3 transition-colors hover:text-ink"
+                aria-label="Criar playlist"
+              >
+                <I.Plus className="h-4 w-4" />
+              </Link>
+            </div>
+
+            {myPlaylists.length === 0 ? (
+              <p className="px-4 pb-2 text-xs leading-relaxed text-ink-3">
+                Crie a primeira em{" "}
+                <Link href="/playlists" className="text-ink-2 hover:underline">
                   Playlists
-                </p>
-                {user.role === "admins" && (
-                  <Link
-                    href="/studio/playlists"
-                    className="text-ink-3 transition-colors hover:text-ink"
-                    aria-label="Criar playlist no Studio"
-                  >
-                    <I.Plus className="h-4 w-4" />
-                  </Link>
-                )}
-              </div>
+                </Link>
+                .
+              </p>
+            ) : (
               <ul className="space-y-0.5">
-                {playlists.map((pl) => (
+                {myPlaylists.map((pl) => (
                   <li key={pl.id}>
-                    <Link
-                      href={`/playlist/${pl.id}`}
-                      className="flex items-center gap-3 rounded-lg px-4 py-2 text-sm text-ink-2 transition-colors hover:bg-surface/60 hover:text-ink"
-                    >
-                      <Cover
-                        src={pl.cover}
-                        seed={pl.id}
-                        name={pl.title}
-                        className="h-9 w-9"
-                      />
-                      <span className="truncate">{pl.title}</span>
-                    </Link>
+                    <PlaylistLink playlist={pl} />
                   </li>
                 ))}
               </ul>
-            </div>
-          )}
+            )}
+
+            {playlists.length > 0 && (
+              <>
+                <div className="flex items-center justify-between px-4 pb-2 pt-5">
+                  <p className="text-xs font-medium uppercase tracking-wider text-ink-3">
+                    Do Sona
+                  </p>
+                  {user.role === "admins" && (
+                    <Link
+                      href="/studio/playlists"
+                      className="text-ink-3 transition-colors hover:text-ink"
+                      aria-label="Criar playlist no Studio"
+                    >
+                      <I.Plus className="h-4 w-4" />
+                    </Link>
+                  )}
+                </div>
+                <ul className="space-y-0.5">
+                  {playlists.map((pl) => (
+                    <li key={pl.id}>
+                      <PlaylistLink playlist={pl} />
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
 
           {/* card promocional, como na referência */}
           <div className={cx("mt-auto p-4", user.role !== "admins" && "hidden")}>
@@ -243,13 +287,6 @@ function TopBar({
       </form>
 
       <div className="ml-auto flex items-center gap-3">
-        <button
-          type="button"
-          className="rounded-full p-2 text-ink-2 transition-colors hover:text-ink"
-          aria-label="Notificações"
-        >
-          <I.Bell className="h-[20px] w-[20px]" />
-        </button>
         <UserMenu user={user} />
       </div>
     </header>

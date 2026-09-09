@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePlayer } from "./PlayerProvider";
+import { AddToPlaylistButton } from "./AddToPlaylist";
 import { Avatar, Cover } from "../Cover";
 import { cx, formatListeners, formatTime } from "@/lib/utils";
 import * as I from "../Icons";
@@ -152,8 +153,8 @@ export function TrackRow({
       className={cx(
         "group grid items-center gap-4 rounded-lg px-4 py-2 transition-colors hover:bg-surface",
         showAlbum
-          ? "grid-cols-[24px_1fr_minmax(0,0.8fr)_auto_56px]"
-          : "grid-cols-[24px_1fr_auto_56px]",
+          ? "grid-cols-[24px_1fr_minmax(0,0.8fr)_auto_auto_56px]"
+          : "grid-cols-[24px_1fr_auto_auto_56px]",
       )}
     >
       {/* índice / play */}
@@ -238,6 +239,8 @@ export function TrackRow({
           <I.Heart className="h-[18px] w-[18px]" />
         )}
       </button>
+
+      <AddToPlaylistButton trackId={track.id} />
 
       <span className="text-right text-sm tabular-nums text-ink-3">
         {formatTime(track.duration)}

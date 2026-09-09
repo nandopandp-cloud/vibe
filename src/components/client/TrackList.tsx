@@ -20,13 +20,14 @@ export function TrackList({
       <div
         className={
           showAlbum
-            ? "grid grid-cols-[24px_1fr_minmax(0,0.8fr)_auto_56px] gap-4 border-b border-hairline px-4 pb-2 text-xs uppercase tracking-wider text-ink-3"
-            : "grid grid-cols-[24px_1fr_auto_56px] gap-4 border-b border-hairline px-4 pb-2 text-xs uppercase tracking-wider text-ink-3"
+            ? "grid grid-cols-[24px_1fr_minmax(0,0.8fr)_auto_auto_56px] gap-4 border-b border-hairline px-4 pb-2 text-xs uppercase tracking-wider text-ink-3"
+            : "grid grid-cols-[24px_1fr_auto_auto_56px] gap-4 border-b border-hairline px-4 pb-2 text-xs uppercase tracking-wider text-ink-3"
         }
       >
         <span>#</span>
         <span>Título</span>
         {showAlbum && <span>Álbum</span>}
+        <span />
         <span />
         <span className="text-right">Duração</span>
       </div>

@@ -104,26 +104,6 @@ export function LoginForm({
 
       <SocialButtons enabled={googleEnabled} next={next} />
 
-      {/* Contas de demonstração — remova este bloco antes de ir ao ar. */}
-      <div className="mt-7 rounded-xl border border-hairline bg-surface/40 p-4">
-        <p className="mb-2.5 flex items-center gap-2 text-xs font-medium text-ink-2">
-          <I.Shield className="h-4 w-4" />
-          Contas de demonstração
-        </p>
-        <dl className="space-y-1.5 text-xs">
-          <div className="flex items-baseline justify-between gap-3">
-            <dt className="text-ink-3">Administrador</dt>
-            <dd className="font-mono text-ink-2">admins@gmail.com · 12345</dd>
-          </div>
-          <div className="flex items-baseline justify-between gap-3">
-            <dt className="text-ink-3">Ouvinte</dt>
-            <dd className="font-mono text-ink-2">
-              nandopandp@gmail.com · 12345
-            </dd>
-          </div>
-        </dl>
-      </div>
-
       <p className="mt-7 text-center text-xs leading-relaxed text-ink-2 sm:hidden">
         Ainda não tem uma conta?{" "}
         <Link href="/criar-conta" className="font-medium text-accent">

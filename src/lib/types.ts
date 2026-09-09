@@ -75,6 +75,17 @@ export type Playlist = {
   trackIds: string[];
   /** Playlists editoriais aparecem na home do cliente. */
   editorial: boolean;
+  /**
+   * Dono da playlist. `null` nas editoriais, feitas no Studio e visíveis
+   * para todo mundo; preenchido nas que o próprio ouvinte cria, que só
+   * ele enxerga e edita.
+   */
+  ownerId: string | null;
+  /**
+   * Playlist de ouvinte pública aparece para quem tem o link; privada só
+   * abre para o dono. As editoriais do Studio são sempre públicas.
+   */
+  visibility: "public" | "private";
   createdAt: string;
 };
 
@@ -95,6 +106,8 @@ export type Database = {
   spotlight: Spotlight;
   /** Faixas curtidas, por id de usuário. */
   liked: Record<string, string[]>;
+  /** Artistas seguidos, por id de usuário. */
+  following: Record<string, string[]>;
 };
 
 export const EMPTY_DB: Database = {
@@ -110,6 +123,7 @@ export const EMPTY_DB: Database = {
     quote: "Às vezes, as melhores músicas voltam pra gente.",
   },
   liked: {},
+  following: {},
 };
 
 /** Faixa com artista e álbum resolvidos — o que a UI consome. */

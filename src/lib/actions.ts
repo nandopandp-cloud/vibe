@@ -755,6 +755,9 @@ export async function createPlaylist(
         cover,
         trackIds: [],
         editorial: form.get("editorial") === "on",
+        // Playlist do Studio é da casa: sem dono, visível para todos.
+        ownerId: null,
+        visibility: "public",
         createdAt: new Date().toISOString(),
       });
     });
@@ -1002,5 +1005,194 @@ export async function fetchShuffleAll(
   } catch (e) {
     console.error(e);
     return [];
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Playlists do ouvinte                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * As playlists do ouvinte são do próprio ouvinte: qualquer ação abaixo
+ * confere a posse antes de mexer. Sem isso, o id na URL bastaria para
+ * editar a playlist de outra pessoa — ou uma editorial do Studio.
+ */
+async function ownedPlaylist(
+  db: Database,
+  playlistId: string,
+  userId: string,
+) {
+  const p = db.playlists.find((x) => x.id === playlistId);
+  if (!p || p.ownerId !== userId) return null;
+  return p;
+}
+
+export async function createMyPlaylist(
+  _prev: ActionState | null,
+  form: FormData,
+): Promise<ActionState> {
+  try {
+    const user = await currentUser();
+    if (!user) return { ok: false, message: "Faça login para continuar." };
+
+    const title = str(form, "title");
+    if (!title) return { ok: false, message: "Dê um nome à playlist." };
+
+    // Uma faixa pode vir junto quando a playlist nasce do menu "Adicionar a".
+    const seedTrackId = str(form, "trackId");
+
+    await mutate((db) => {
+      db.playlists.push({
+        id: newId(),
+        title,
+        description: str(form, "description"),
+        cover: null,
+        trackIds: seedTrackId ? [seedTrackId] : [],
+        editorial: false,
+        ownerId: user.id,
+        // Privada por padrão: publicar é uma escolha, não um descuido.
+        visibility: form.get("visibility") === "public" ? "public" : "private",
+        createdAt: new Date().toISOString(),
+      });
+    });
+
+    refresh();
+    return { ok: true, message: `Playlist “${title}” criada.` };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+export async function renameMyPlaylist(
+  playlistId: string,
+  title: string,
+): Promise<ActionState> {
+  try {
+    const user = await currentUser();
+    if (!user) return { ok: false, message: "Faça login para continuar." };
+    const clean = title.trim();
+    if (!clean) return { ok: false, message: "Dê um nome à playlist." };
+
+    const ok = await mutate(async (db) => {
+      const p = await ownedPlaylist(db, playlistId, user.id);
+      if (!p) return false;
+      p.title = clean;
+      return true;
+    });
+    if (!ok) return { ok: false, message: "Playlist não encontrada." };
+
+    refresh();
+    return { ok: true, message: "Playlist renomeada." };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+export async function deleteMyPlaylist(
+  playlistId: string,
+): Promise<ActionState> {
+  try {
+    const user = await currentUser();
+    if (!user) return { ok: false, message: "Faça login para continuar." };
+
+    const ok = await mutate(async (db) => {
+      const p = await ownedPlaylist(db, playlistId, user.id);
+      if (!p) return false;
+      db.playlists = db.playlists.filter((x) => x.id !== playlistId);
+      return true;
+    });
+    if (!ok) return { ok: false, message: "Playlist não encontrada." };
+
+    refresh();
+    return { ok: true, message: "Playlist excluída." };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Adiciona ou remove uma faixa de uma playlist do próprio ouvinte. */
+export async function toggleMyPlaylistTrack(
+  playlistId: string,
+  trackId: string,
+): Promise<ActionState> {
+  try {
+    const user = await currentUser();
+    if (!user) return { ok: false, message: "Faça login para continuar." };
+
+    const res = await mutate(async (db) => {
+      const p = await ownedPlaylist(db, playlistId, user.id);
+      if (!p) return null;
+      const i = p.trackIds.indexOf(trackId);
+      if (i >= 0) p.trackIds.splice(i, 1);
+      else p.trackIds.push(trackId);
+      return i >= 0 ? "removida" : "adicionada";
+    });
+    if (!res) return { ok: false, message: "Playlist não encontrada." };
+
+    refresh();
+    return { ok: true, message: `Faixa ${res}.` };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Artistas seguidos                                                   */
+/* ------------------------------------------------------------------ */
+
+/** Segue/deixa de seguir — alimenta a página "Seus Artistas". */
+export async function toggleFollowArtist(
+  artistId: string,
+): Promise<ActionState> {
+  try {
+    const user = await currentUser();
+    if (!user) {
+      return { ok: false, message: "Faça login para seguir artistas." };
+    }
+
+    const following = await mutate((db) => {
+      const list = (db.following[user.id] ??= []);
+      const i = list.indexOf(artistId);
+      if (i >= 0) {
+        list.splice(i, 1);
+        return false;
+      }
+      list.push(artistId);
+      return true;
+    });
+
+    refresh();
+    return {
+      ok: true,
+      message: following ? "Artista salvo." : "Artista removido.",
+    };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Alterna entre pública e privada — só o dono decide. */
+export async function toggleMyPlaylistVisibility(
+  playlistId: string,
+): Promise<ActionState> {
+  try {
+    const user = await currentUser();
+    if (!user) return { ok: false, message: "Faça login para continuar." };
+
+    const now = await mutate(async (db) => {
+      const p = await ownedPlaylist(db, playlistId, user.id);
+      if (!p) return null;
+      p.visibility = p.visibility === "public" ? "private" : "public";
+      return p.visibility;
+    });
+    if (!now) return { ok: false, message: "Playlist não encontrada." };
+
+    refresh();
+    return {
+      ok: true,
+      message: now === "public" ? "Playlist pública." : "Playlist privada.",
+    };
+  } catch (e) {
+    return fail(e);
   }
 }
