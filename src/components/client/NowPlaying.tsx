@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePlayer } from "./PlayerProvider";
 import { Avatar, Cover } from "../Cover";
-import { activeLyricIndex, cx, formatListeners, formatTime } from "@/lib/utils";
+import { activeLyricIndex, cx, formatPlays, formatTime } from "@/lib/utils";
 import * as I from "../Icons";
 
 /** Letra que acompanha a reprodução e permite pular para um verso. */
@@ -372,7 +372,7 @@ export function NowPlaying({ onClose }: { onClose: () => void }) {
                         {t.artist.name}
                       </p>
                       <p className="text-sm text-ink-2">
-                        {formatListeners(t.artist.monthlyListeners)} ouvintes mensais
+                        {formatPlays(t.plays)} desta faixa
                       </p>
                     </div>
                   </div>

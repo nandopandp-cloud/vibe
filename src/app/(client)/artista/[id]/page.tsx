@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { hydrateAll, readDb } from "@/lib/db";
+import { hydrateAll, playsByAlbum, readDb } from "@/lib/db";
 import { currentUser } from "@/lib/auth";
 import { TrackList } from "@/components/client/TrackList";
 import { PlayAllButton, ShuffleButton } from "@/components/client/TrackCard";
@@ -7,7 +7,7 @@ import { FollowButton } from "@/components/client/FollowButton";
 import { Section } from "@/components/client/Section";
 import { Avatar, Cover } from "@/components/Cover";
 import Link from "next/link";
-import { formatListeners, formatNumber } from "@/lib/utils";
+import { formatPlays } from "@/lib/utils";
 
 export default async function ArtistPage({
   params,
@@ -29,6 +29,7 @@ export default async function ArtistPage({
   );
 
   const albums = db.albums.filter((al) => al.artistId === id);
+  const albumPlays = playsByAlbum(db);
   const isFollowing = user
     ? (db.following[user.id]?.includes(artist.id) ?? false)
     : false;
@@ -65,9 +66,7 @@ export default async function ArtistPage({
               {artist.name}
             </h1>
             <p className="mt-3 text-sm text-ink-2">
-              {formatListeners(artist.monthlyListeners)} ouvintes mensais •{" "}
-              {tracks.length} faixa(s)
-              {totalPlays > 0 && ` • ${formatNumber(totalPlays)} reproduções`}
+              {formatPlays(totalPlays)} • {tracks.length} faixa(s)
             </p>
             <div className="mt-6 flex flex-wrap items-center gap-3">
               <PlayAllButton tracks={tracks} />
@@ -105,7 +104,9 @@ export default async function ArtistPage({
                   <h3 className="mt-3 truncate text-sm font-medium text-ink">
                     {al.title}
                   </h3>
-                  <p className="truncate text-xs text-ink-2">{al.year}</p>
+                  <p className="truncate text-xs text-ink-2">
+                    {al.year} • {formatPlays(albumPlays.get(al.id) ?? 0)}
+                  </p>
                 </Link>
               ))}
             </div>

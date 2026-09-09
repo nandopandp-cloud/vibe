@@ -6,7 +6,7 @@ import { TrackList } from "@/components/client/TrackList";
 import { PlayAllButton, ShuffleButton } from "@/components/client/TrackCard";
 import { PageHeader } from "@/components/client/Section";
 import { Cover } from "@/components/Cover";
-import { formatTime } from "@/lib/utils";
+import { formatPlays, formatTime } from "@/lib/utils";
 
 export default async function AlbumPage({
   params,
@@ -28,6 +28,7 @@ export default async function AlbumPage({
     user?.id,
   );
   const total = tracks.reduce((s, t) => s + t.duration, 0);
+  const plays = tracks.reduce((s, t) => s + t.plays, 0);
 
   return (
     <div className="animate-rise px-6 pb-12 pt-2 md:px-8">
@@ -47,6 +48,7 @@ export default async function AlbumPage({
             {" • "}
             {album.year} • {tracks.length} faixa(s)
             {total > 0 && ` • ${formatTime(total)}`}
+            {` • ${formatPlays(plays)}`}
           </>
         }
         cover={

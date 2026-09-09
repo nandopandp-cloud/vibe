@@ -29,7 +29,6 @@ export type Artist = {
   /** URL pública da foto no Vercel Blob. */
   image: string | null;
   bio: string;
-  monthlyListeners: number;
   featured: boolean;
   createdAt: string;
 };

@@ -1,15 +1,16 @@
 import Link from "next/link";
-import { readDb, recentTracks } from "@/lib/db";
+import { playsByArtist, readDb, recentTracks } from "@/lib/db";
 import { StudioHeader } from "@/components/studio/Form";
 import { SpotlightForm } from "@/components/studio/SpotlightForm";
 import { Cover } from "@/components/Cover";
-import { formatListeners } from "@/lib/utils";
+import { formatPlays } from "@/lib/utils";
 import * as I from "@/components/Icons";
 
 export default async function SpotlightPage() {
   const db = await readDb();
   const tracks = recentTracks(db);
   const featured = db.artists.filter((a) => a.featured);
+  const plays = playsByArtist(db);
 
   return (
     <>
@@ -65,7 +66,7 @@ export default async function SpotlightPage() {
                     />
                     <p className="mt-2 truncate text-sm text-ink">{a.name}</p>
                     <p className="truncate text-xs text-ink-2">
-                      {formatListeners(a.monthlyListeners)} ouvintes
+                      {formatPlays(plays.get(a.id) ?? 0)}
                     </p>
                   </li>
                 ))}

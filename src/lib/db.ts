@@ -6,6 +6,7 @@ import { connection } from "next/server";
 import { cache } from "react";
 import {
   EMPTY_DB,
+  type Artist,
   type Database,
   type HydratedTrack,
   type Track,
@@ -176,6 +177,26 @@ async function loadDb(): Promise<Database> {
       ...p,
       ownerId: p.ownerId ?? null,
       visibility: p.visibility ?? "public",
+    })),
+    // O catálogo já gravado traz `monthlyListeners`, um número digitado à
+    // mão que deu lugar às execuções reais. Descartamos na leitura para
+    // não reescrevê-lo a cada gravação do documento.
+    artists: (doc.artists ?? []).map(
+      ({ id, name, image, bio, featured, createdAt }): Artist => ({
+        id,
+        name,
+        image,
+        bio,
+        featured,
+        createdAt,
+      }),
+    ),
+    // Faixas anteriores ao contador não têm `plays`; sem isto as somas
+    // por artista e por álbum virariam NaN.
+    tracks: (doc.tracks ?? []).map((t) => ({
+      ...t,
+      plays: t.plays ?? 0,
+      playLog: t.playLog ?? [],
     })),
     spotlight: { ...EMPTY_DB.spotlight, ...(doc.spotlight ?? {}) },
     users: (userRows as UserRow[]).map(toUser),
@@ -424,4 +445,36 @@ export function playlistCovers(
   }
 
   return chosen;
+}
+
+/**
+ * Execuções somadas por artista — quantas vezes as faixas dele tocaram.
+ *
+ * O total sai sempre de `track.plays`, que é incrementado a cada
+ * reprodução real. Um Map evita varrer o catálogo uma vez por artista
+ * nas telas que listam muitos deles.
+ */
+export function playsByArtist(db: Database): Map<string, number> {
+  const total = new Map<string, number>();
+  for (const t of db.tracks) {
+    total.set(t.artistId, (total.get(t.artistId) ?? 0) + t.plays);
+  }
+  return total;
+}
+
+/** Execuções somadas por álbum, na mesma lógica de `playsByArtist`. */
+export function playsByAlbum(db: Database): Map<string, number> {
+  const total = new Map<string, number>();
+  for (const t of db.tracks) {
+    if (!t.albumId) continue;
+    total.set(t.albumId, (total.get(t.albumId) ?? 0) + t.plays);
+  }
+  return total;
+}
+
+/** Execuções de um artista específico. */
+export function artistPlays(db: Database, artistId: string): number {
+  return db.tracks
+    .filter((t) => t.artistId === artistId)
+    .reduce((s, t) => s + t.plays, 0);
 }

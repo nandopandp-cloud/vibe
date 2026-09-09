@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { hydrateAll, readDb } from "@/lib/db";
+import { hydrateAll, readDb, playsByArtist } from "@/lib/db";
 import { currentUser } from "@/lib/auth";
 import { TrackList } from "@/components/client/TrackList";
 import { ArtistCard } from "@/components/client/TrackCard";
@@ -59,6 +59,7 @@ export default async function SearchPage({
   const matches = (s: string | undefined) =>
     foldText(s ?? "").includes(needle);
 
+  const plays = playsByArtist(db);
   const artists = db.artists.filter(
     (a) => matches(a.name) || matches(a.bio),
   );
@@ -109,7 +110,7 @@ export default async function SearchPage({
             <Section title="Artistas">
               <CardGrid>
                 {artists.map((a) => (
-                  <ArtistCard key={a.id} artist={a} />
+                  <ArtistCard key={a.id} artist={a} plays={plays.get(a.id) ?? 0} />
                 ))}
               </CardGrid>
             </Section>

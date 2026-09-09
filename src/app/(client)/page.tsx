@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { hydrate, readDb, recentTracks } from "@/lib/db";
+import { hydrate, playsByArtist, readDb, recentTracks } from "@/lib/db";
 import { currentUser } from "@/lib/auth";
 import { Hero } from "@/components/client/Hero";
 import { ArtistCard, TrackCard } from "@/components/client/TrackCard";
@@ -38,15 +38,15 @@ export default async function HomePage() {
       ? tracks.find((t) => t.id === db.spotlight.trackId)
       : null) ?? tracks[0];
 
-  const featuredArtists = db.artists
-    .filter((a) => a.featured)
-    .sort((a, b) => b.monthlyListeners - a.monthlyListeners);
+  const plays = playsByArtist(db);
+  const byPlays = (a: { id: string }, b: { id: string }) =>
+    (plays.get(b.id) ?? 0) - (plays.get(a.id) ?? 0);
 
-  // Sem destaques marcados, mostramos os artistas com mais ouvintes.
+  const featuredArtists = db.artists.filter((a) => a.featured).sort(byPlays);
+
+  // Sem destaques marcados, mostramos quem mais tocou.
   const artists = (
-    featuredArtists.length > 0
-      ? featuredArtists
-      : [...db.artists].sort((a, b) => b.monthlyListeners - a.monthlyListeners)
+    featuredArtists.length > 0 ? featuredArtists : [...db.artists].sort(byPlays)
   ).slice(0, 6);
 
   const editorial = db.playlists.filter((p) => p.editorial).slice(0, 6);
@@ -72,7 +72,11 @@ export default async function HomePage() {
         <Section title="Artistas em destaque" href="/artistas">
           <CardGrid>
             {artists.map((artist) => (
-              <ArtistCard key={artist.id} artist={artist} />
+              <ArtistCard
+                key={artist.id}
+                artist={artist}
+                plays={plays.get(artist.id) ?? 0}
+              />
             ))}
           </CardGrid>
         </Section>

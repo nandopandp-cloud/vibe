@@ -13,14 +13,32 @@ export function formatTime(seconds: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-/** 125000 -> "125 mil". Formato das referências. */
-export function formatListeners(n: number): string {
-  if (n >= 1_000_000) {
-    const v = n / 1_000_000;
-    return `${v.toFixed(v < 10 ? 1 : 0).replace(".", ",")} mi`;
-  }
-  if (n >= 1000) return `${Math.round(n / 1000)} mil`;
+/**
+ * 125000 -> "125 mil". Abrevia totais grandes nas telas.
+ *
+ * Arredonda para baixo: um contador de execuções não deve anunciar mais
+ * do que aconteceu — 1500 vira "1,5 mil", nunca "2 mil".
+ */
+export function formatCompact(n: number): string {
+  const trunc = (v: number, casas: number) =>
+    (Math.floor(v * 10 ** casas) / 10 ** casas)
+      .toFixed(casas)
+      .replace(".", ",")
+      .replace(/,0$/, "");
+
+  if (n >= 1_000_000) return `${trunc(n / 1_000_000, n < 10_000_000 ? 1 : 0)} mi`;
+  if (n >= 1000) return `${trunc(n / 1000, n < 10_000 ? 1 : 0)} mil`;
   return String(n);
+}
+
+/**
+ * Execuções com a palavra junto: "1 execução", "42 execuções".
+ * Zero vira "Ainda sem execuções" — um "0 execuções" seco pesa nas
+ * telas de um catálogo que acabou de subir.
+ */
+export function formatPlays(n: number): string {
+  if (n <= 0) return "Ainda sem execuções";
+  return `${formatCompact(n)} ${n === 1 ? "execução" : "execuções"}`;
 }
 
 export function formatNumber(n: number): string {

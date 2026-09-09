@@ -1,4 +1,4 @@
-import { readDb } from "@/lib/db";
+import { playsByArtist, readDb } from "@/lib/db";
 import { currentUser } from "@/lib/auth";
 import { ArtistCard } from "@/components/client/TrackCard";
 import { CardGrid, EmptyState, Section } from "@/components/client/Section";
@@ -9,12 +9,13 @@ export default async function ArtistsPage() {
   const db = await readDb();
 
   const savedIds = new Set(user ? (db.following[user.id] ?? []) : []);
-  const byListeners = (a: { monthlyListeners: number }, b: typeof a) =>
-    b.monthlyListeners - a.monthlyListeners;
+  const plays = playsByArtist(db);
+  const byPlays = (a: { id: string }, b: { id: string }) =>
+    (plays.get(b.id) ?? 0) - (plays.get(a.id) ?? 0);
 
-  const saved = db.artists.filter((a) => savedIds.has(a.id)).sort(byListeners);
+  const saved = db.artists.filter((a) => savedIds.has(a.id)).sort(byPlays);
   // O resto do catálogo continua à mão, para descobrir quem seguir.
-  const rest = db.artists.filter((a) => !savedIds.has(a.id)).sort(byListeners);
+  const rest = db.artists.filter((a) => !savedIds.has(a.id)).sort(byPlays);
 
   return (
     <div className="animate-rise px-6 pb-12 pt-2 md:px-8">
@@ -43,7 +44,7 @@ export default async function ArtistsPage() {
           <Section title="No catálogo">
             <CardGrid>
               {rest.map((a) => (
-                <ArtistCard key={a.id} artist={a} />
+                <ArtistCard key={a.id} artist={a} plays={plays.get(a.id) ?? 0} />
               ))}
             </CardGrid>
           </Section>
@@ -52,7 +53,7 @@ export default async function ArtistsPage() {
         <>
           <CardGrid>
             {saved.map((a) => (
-              <ArtistCard key={a.id} artist={a} />
+              <ArtistCard key={a.id} artist={a} plays={plays.get(a.id) ?? 0} />
             ))}
           </CardGrid>
 
@@ -60,7 +61,7 @@ export default async function ArtistsPage() {
             <Section title="Descubra mais">
               <CardGrid>
                 {rest.map((a) => (
-                  <ArtistCard key={a.id} artist={a} />
+                  <ArtistCard key={a.id} artist={a} plays={plays.get(a.id) ?? 0} />
                 ))}
               </CardGrid>
             </Section>

@@ -1,12 +1,14 @@
 import Link from "next/link";
-import { readDb } from "@/lib/db";
+import { playsByAlbum, readDb } from "@/lib/db";
 import { CardGrid, EmptyState } from "@/components/client/Section";
 import { Cover } from "@/components/Cover";
 import * as I from "@/components/Icons";
+import { formatPlays } from "@/lib/utils";
 
 export default async function AlbumsPage() {
   const db = await readDb();
   const albums = [...db.albums].sort((a, b) => b.year - a.year);
+  const plays = playsByAlbum(db);
 
   return (
     <div className="animate-rise px-6 pb-12 pt-2 md:px-8">
@@ -36,6 +38,9 @@ export default async function AlbumsPage() {
                 </h3>
                 <p className="mt-0.5 truncate text-xs text-ink-2">
                   {artist?.name} • {al.year}
+                </p>
+                <p className="mt-0.5 truncate text-xs text-ink-3">
+                  {formatPlays(plays.get(al.id) ?? 0)}
                 </p>
               </Link>
             );

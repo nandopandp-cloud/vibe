@@ -20,7 +20,7 @@ import {
   SubmitButton,
   Textarea,
 } from "./Form";
-import { cx, formatListeners, formatNumber } from "@/lib/utils";
+import { cx, formatNumber, formatPlays } from "@/lib/utils";
 import * as I from "../Icons";
 import type { Artist } from "@/lib/types";
 
@@ -41,19 +41,9 @@ function ArtistForm({ artist, onDone }: { artist: Artist; onDone: () => void }) 
       className="mt-4 space-y-4 border-t border-hairline pt-4"
     >
       <FormMessage state={msg} />
-      <div className="grid gap-4 md:grid-cols-2">
-        <Field label="Nome">
-          <Input name="name" defaultValue={artist.name} />
-        </Field>
-        <Field label="Ouvintes mensais">
-          <Input
-            name="monthlyListeners"
-            type="number"
-            min={0}
-            defaultValue={artist.monthlyListeners}
-          />
-        </Field>
-      </div>
+      <Field label="Nome">
+        <Input name="name" defaultValue={artist.name} />
+      </Field>
       <Field label="Biografia">
         <Textarea name="bio" defaultValue={artist.bio} rows={3} />
       </Field>
@@ -81,9 +71,11 @@ function ArtistForm({ artist, onDone }: { artist: Artist; onDone: () => void }) 
 export function ArtistManager({
   artists,
   trackCounts,
+  playCounts,
 }: {
   artists: Artist[];
   trackCounts: Record<string, number>;
+  playCounts: Record<string, number>;
 }) {
   const [state, action] = useActionState(createArtist, null);
   const [editing, setEditing] = useState<string | null>(null);
@@ -105,14 +97,6 @@ export function ArtistManager({
               name="bio"
               rows={4}
               placeholder="Conte a história do artista — aparece na tela de reprodução."
-            />
-          </Field>
-          <Field label="Ouvintes mensais" hint="Usado nas telas do ouvinte.">
-            <Input
-              name="monthlyListeners"
-              type="number"
-              min={0}
-              defaultValue={0}
             />
           </Field>
           <FileDrop
@@ -167,7 +151,7 @@ export function ArtistManager({
                       )}
                     </div>
                     <p className="mt-0.5 text-xs text-ink-2">
-                      {formatListeners(a.monthlyListeners)} ouvintes •{" "}
+                      {formatPlays(playCounts[a.id] ?? 0)} •{" "}
                       {formatNumber(trackCounts[a.id] ?? 0)} faixa(s)
                     </p>
                   </div>

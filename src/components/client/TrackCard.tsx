@@ -4,7 +4,13 @@ import Link from "next/link";
 import { usePlayer } from "./PlayerProvider";
 import { AddToPlaylistButton } from "./AddToPlaylist";
 import { Avatar, Cover } from "../Cover";
-import { cx, formatListeners, formatTime } from "@/lib/utils";
+import {
+  cx,
+  formatCompact,
+  formatNumber,
+  formatPlays,
+  formatTime,
+} from "@/lib/utils";
 import * as I from "../Icons";
 import type { Artist, HydratedTrack } from "@/lib/types";
 
@@ -110,7 +116,13 @@ export function TrackCard({
 }
 
 /** Círculo do artista, usado em "Artistas em destaque". */
-export function ArtistCard({ artist }: { artist: Artist }) {
+export function ArtistCard({
+  artist,
+  plays = 0,
+}: {
+  artist: Artist;
+  plays?: number;
+}) {
   return (
     <Link href={`/artista/${artist.id}`} className="group block text-center">
       <Avatar
@@ -123,7 +135,7 @@ export function ArtistCard({ artist }: { artist: Artist }) {
         {artist.name}
       </h3>
       <p className="mt-0.5 truncate text-xs text-ink-2">
-        {formatListeners(artist.monthlyListeners)} ouvintes
+        {formatPlays(plays)}
       </p>
     </Link>
   );
@@ -153,8 +165,8 @@ export function TrackRow({
       className={cx(
         "group grid items-center gap-4 rounded-lg px-4 py-2 transition-colors hover:bg-surface",
         showAlbum
-          ? "grid-cols-[24px_1fr_minmax(0,0.8fr)_auto_auto_56px]"
-          : "grid-cols-[24px_1fr_auto_auto_56px]",
+          ? "grid-cols-[24px_1fr_auto_auto_56px] md:grid-cols-[24px_1fr_minmax(0,0.8fr)_auto_auto_auto_56px]"
+          : "grid-cols-[24px_1fr_auto_auto_56px] md:grid-cols-[24px_1fr_auto_auto_auto_56px]",
       )}
     >
       {/* índice / play */}
@@ -216,10 +228,18 @@ export function TrackRow({
       </div>
 
       {showAlbum && (
-        <p className="truncate text-sm text-ink-2">
+        <p className="hidden truncate text-sm text-ink-2 md:block">
           {track.album?.title ?? "Single"}
         </p>
       )}
+
+      {/* execuções: escondidas no mobile, onde a linha já está cheia */}
+      <p
+        className="hidden text-xs tabular-nums text-ink-3 md:block"
+        title={`${formatNumber(track.plays)} execuções`}
+      >
+        {formatCompact(track.plays)}
+      </p>
 
       <button
         type="button"

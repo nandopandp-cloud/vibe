@@ -69,7 +69,6 @@ export async function createArtist(
         name,
         image,
         bio: str(form, "bio"),
-        monthlyListeners: Number(form.get("monthlyListeners") ?? 0) || 0,
         featured: form.get("featured") === "on",
         createdAt: new Date().toISOString(),
       });
@@ -103,8 +102,6 @@ export async function updateArtist(
       }
       artist.name = str(form, "name") || artist.name;
       artist.bio = str(form, "bio");
-      artist.monthlyListeners =
-        Number(form.get("monthlyListeners") ?? 0) || 0;
       artist.featured = form.get("featured") === "on";
       return artist.name;
     });
@@ -207,7 +204,6 @@ export async function createTrack(
             name: newArtistName,
             image: null,
             bio: "",
-            monthlyListeners: 0,
             featured: false,
             createdAt: new Date().toISOString(),
           });
@@ -342,7 +338,6 @@ function resolveArtist(
     name: newArtistName,
     image: null,
     bio: "",
-    monthlyListeners: 0,
     featured: false,
     createdAt: new Date().toISOString(),
   });
@@ -891,7 +886,10 @@ export async function toggleLike(trackId: string): Promise<ActionState> {
   }
 }
 
-/** Registra uma reprodução — alimenta o dashboard do studio. */
+/**
+ * Registra uma reprodução — alimenta o dashboard do studio e os totais de
+ * execuções mostrados em artistas, álbuns e faixas.
+ */
 export async function registerPlay(trackId: string): Promise<void> {
   try {
     await mutate((db) => {
