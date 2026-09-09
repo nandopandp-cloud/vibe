@@ -53,7 +53,7 @@ export function LoginForm({
             <br />e seguir ouvindo o que te inspira.
           </p>
         </div>
-        <p className="hidden shrink-0 pt-1 text-right text-xs text-ink-2 sm:block">
+        {/* <p className="hidden shrink-0 pt-1 text-right text-xs text-ink-2 sm:block">
           Ainda não tem uma conta?
           <br />
           <Link
@@ -62,7 +62,7 @@ export function LoginForm({
           >
             Criar conta
           </Link>
-        </p>
+        </p> */}
       </header>
 
       <form action={action} className="space-y-5">
