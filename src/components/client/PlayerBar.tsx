@@ -62,7 +62,13 @@ function IconButton({
   );
 }
 
-export function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () => void }) {
+export function PlayerBar({
+  onOpenNowPlaying,
+  onOpenLyrics,
+}: {
+  onOpenNowPlaying: () => void;
+  onOpenLyrics: () => void;
+}) {
   const p = usePlayer();
   const t = p.current;
 
@@ -230,6 +236,14 @@ export function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () => void }
           aria-label="Fila de reprodução"
         >
           <I.Queue className="h-[18px] w-[18px]" />
+        </IconButton>
+        <IconButton
+          className="h-8 w-8"
+          onClick={onOpenLyrics}
+          aria-label="Ver a letra"
+          disabled={!t}
+        >
+          <I.Mic className="h-[18px] w-[18px]" />
         </IconButton>
         <DeviceMenu />
         <div className="flex items-center gap-1.5">

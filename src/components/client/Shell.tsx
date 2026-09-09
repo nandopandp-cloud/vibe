@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { PlayerBar } from "./PlayerBar";
 import { NowPlaying } from "./NowPlaying";
+import { LyricsScreen } from "./LyricsScreen";
 import { Logo } from "../Brand";
 import { MosaicCover } from "../Cover";
 import { cx } from "@/lib/utils";
@@ -86,6 +87,7 @@ export function Shell({
 }) {
   const pathname = usePathname();
   const [nowPlaying, setNowPlaying] = useState(false);
+  const [lyrics, setLyrics] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
   const isActive = (href: string) =>
@@ -244,8 +246,12 @@ export function Shell({
         </main>
       </div>
 
-      <PlayerBar onOpenNowPlaying={() => setNowPlaying(true)} />
+      <PlayerBar
+        onOpenNowPlaying={() => setNowPlaying(true)}
+        onOpenLyrics={() => setLyrics(true)}
+      />
       {nowPlaying && <NowPlaying onClose={() => setNowPlaying(false)} />}
+      {lyrics && <LyricsScreen onClose={() => setLyrics(false)} />}
     </div>
   );
 }
