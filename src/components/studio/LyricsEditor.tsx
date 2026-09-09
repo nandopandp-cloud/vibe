@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { importLyrics, saveLyrics, type ActionState } from "@/lib/actions";
 import { Cover } from "../Cover";
 import { Button, Card, FormMessage, Textarea } from "./Form";
@@ -8,6 +8,7 @@ import {
   activeLyricIndex,
   cx,
   formatTime,
+  parseLyrics,
   parseTimecode,
   toTimecode,
 } from "@/lib/utils";
@@ -52,6 +53,26 @@ export function LyricsEditor({ track }: { track: HydratedTrack }) {
     setTime(seconds);
   };
 
+  /**
+   * Marcar ao vivo: com a faixa tocando, a barra de espaço carimba o
+   * verso atual e já avança para o próximo. É o que torna a sincronia
+   * exata sem sair do teclado — clicar verso a verso perde o compasso.
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
+      if (el?.isContentEditable) return;
+      if (e.code !== "Space" || lines.length === 0) return;
+      e.preventDefault();
+      stamp(cursor);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // `stamp` lê refs e estado atual a cada chamada.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cursor, lines.length]);
+
   const togglePlay = () => {
     const el = audioRef.current;
     if (!el) return;
@@ -84,23 +105,10 @@ export function LyricsEditor({ track }: { track: HydratedTrack }) {
                     const res = await importLyrics(track.id, bulk);
                     setMsg(res);
                     if (res.ok) {
-                      // Reflete localmente sem esperar o revalidate.
-                      const parsed: LyricLine[] = [];
-                      let fb = 0;
-                      for (const raw of bulk.split("\n")) {
-                        const text = raw.trim();
-                        if (!text) continue;
-                        const m = /^\[?(\d+:[0-5]?\d(?:[.,]\d+)?)\]?\s+(.*)$/.exec(text);
-                        if (m) {
-                          const t = parseTimecode(m[1]) ?? fb;
-                          parsed.push({ time: t, text: m[2] });
-                          fb = t + 3;
-                        } else {
-                          parsed.push({ time: fb, text });
-                          fb += 3;
-                        }
-                      }
-                      setLines(parsed);
+                      // Reflete localmente sem esperar o revalidate, com o
+                      // mesmo parser do servidor — duas implementações
+                      // divergiriam e a prévia mentiria sobre o salvo.
+                      setLines(parseLyrics(bulk, duration || track.duration));
                       setShowImport(false);
                       setCursor(0);
                     }
@@ -119,7 +127,7 @@ export function LyricsEditor({ track }: { track: HydratedTrack }) {
         ) : (
           <Card
             title="Versos"
-            description="Toque a faixa e clique em “Marcar” no verso que está soando. O tempo é gravado com uma casa decimal."
+            description="Toque a faixa e aperte a barra de espaço a cada verso — o tempo é carimbado e o cursor avança sozinho. Clicar em “Marcar” faz o mesmo."
           >
             <div className="mb-4 flex flex-wrap gap-2">
               <Button

@@ -115,3 +115,65 @@ export function slugify(s: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
 }
+
+/**
+ * Converte letra colada em linhas com tempo.
+ *
+ * Linhas marcadas (`[0:12] verso`) mantêm o tempo escrito. As demais são
+ * distribuídas pela duração real da faixa — antes o import chutava três
+ * segundos por verso, um valor fixo que ignorava a música e fazia a letra
+ * desandar já no primeiro refrão.
+ *
+ * A distribuição pondera o tamanho de cada verso: linha longa leva mais
+ * tempo que linha curta, o que aproxima bem mais do canto do que dividir
+ * o disco em fatias iguais. Continua sendo estimativa — o ajuste fino é
+ * a marcação ao vivo, no editor.
+ */
+export function parseLyrics(
+  raw: string,
+  duration = 0,
+): Array<{ time: number; text: string }> {
+  type Entry = { time: number | null; text: string };
+
+  const entries: Entry[] = [];
+  for (const line of raw.split("\n")) {
+    const text = line.trim();
+    if (!text) continue;
+    const tagged = /^\[?(\d+:[0-5]?\d(?:[.,]\d+)?)\]?\s*(.*)$/.exec(text);
+    if (tagged && tagged[2]) {
+      entries.push({ time: parseTimecode(tagged[1]), text: tagged[2] });
+    } else {
+      entries.push({ time: null, text });
+    }
+  }
+  if (entries.length === 0) return [];
+
+  // Sem duração conhecida, mantemos o passo fixo: é o melhor palpite
+  // possível quando não se sabe onde a música termina.
+  const untimed = entries.filter((e) => e.time === null).length;
+  if (duration <= 0 || untimed === 0) {
+    let fallback = 0;
+    return entries.map((e) => {
+      const time = e.time ?? fallback;
+      fallback = time + 3;
+      return { time, text: e.text };
+    });
+  }
+
+  // Uma introdução instrumental é a regra, não a exceção: começar no
+  // segundo zero atrasaria a letra inteira.
+  const intro = Math.min(duration * 0.06, 8);
+  const usable = Math.max(duration - intro, 1);
+  const weight = (t: string) => Math.max(t.length, 8);
+  const total = entries.reduce((sum, e) => sum + weight(e.text), 0);
+
+  let elapsed = 0;
+  return entries.map((e) => {
+    const start = intro + (elapsed / total) * usable;
+    elapsed += weight(e.text);
+    return {
+      time: e.time ?? Math.round(start * 10) / 10,
+      text: e.text,
+    };
+  });
+}

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { hydrateAll, mutate, newId, readDb } from "./db";
 import { fileField, removeUpload, saveAudio, saveImage, UploadError } from "./storage";
-import { normalizeLyrics, parseTimecode } from "./utils";
+import { normalizeLyrics, parseLyrics } from "./utils";
 import { currentUser } from "./auth";
 import type { Database, HydratedTrack, LyricLine, Track } from "./types";
 
@@ -712,22 +712,9 @@ export async function importLyrics(
   trackId: string,
   raw: string,
 ): Promise<ActionState> {
-  const lines: LyricLine[] = [];
-  let fallback = 0;
-  for (const line of raw.split("\n")) {
-    const text = line.trim();
-    if (!text) continue;
-    const tagged = /^\[?(\d+:[0-5]?\d(?:[.,]\d+)?)\]?\s+(.*)$/.exec(text);
-    if (tagged) {
-      const t = parseTimecode(tagged[1]);
-      lines.push({ time: t ?? fallback, text: tagged[2] });
-      fallback = (t ?? fallback) + 3;
-    } else {
-      lines.push({ time: fallback, text });
-      fallback += 3;
-    }
-  }
-  return saveLyrics(trackId, lines);
+  const db = await readDb();
+  const duration = db.tracks.find((t) => t.id === trackId)?.duration ?? 0;
+  return saveLyrics(trackId, parseLyrics(raw, duration));
 }
 
 /* ------------------------------------------------------------------ */
