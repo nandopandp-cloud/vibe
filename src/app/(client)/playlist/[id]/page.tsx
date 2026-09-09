@@ -3,7 +3,7 @@ import Link from "next/link";
 import { hydrateAll, readDb } from "@/lib/db";
 import { currentUser } from "@/lib/auth";
 import { TrackList } from "@/components/client/TrackList";
-import { PlayAllButton } from "@/components/client/TrackCard";
+import { PlayAllButton, ShuffleButton } from "@/components/client/TrackCard";
 import { PageHeader } from "@/components/client/Section";
 import { Cover } from "@/components/Cover";
 import { formatTime } from "@/lib/utils";
@@ -57,6 +57,7 @@ export default async function PlaylistPage({
         }
       >
         <PlayAllButton tracks={tracks} />
+        <ShuffleButton tracks={tracks} />
       </PageHeader>
 
       <div className="mt-8">

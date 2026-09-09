@@ -1,7 +1,7 @@
 import { readDb, recentTracks } from "@/lib/db";
 import { currentUser } from "@/lib/auth";
 import { TrackList } from "@/components/client/TrackList";
-import { PlayAllButton } from "@/components/client/TrackCard";
+import { PlayAllButton, ShuffleButton } from "@/components/client/TrackCard";
 import { EmptyState } from "@/components/client/Section";
 import * as I from "@/components/Icons";
 
@@ -23,7 +23,10 @@ export default async function LibraryPage() {
               : `${tracks.length} faixa(s) no catálogo`}
           </p>
         </div>
-        <PlayAllButton tracks={tracks} label="Tocar tudo" />
+        <div className="flex flex-wrap items-center gap-3">
+          <PlayAllButton tracks={tracks} label="Tocar tudo" />
+          <ShuffleButton tracks={tracks} />
+        </div>
       </header>
 
       {tracks.length === 0 ? (

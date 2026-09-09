@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { hydrateAll, readDb } from "@/lib/db";
 import { currentUser } from "@/lib/auth";
 import { TrackList } from "@/components/client/TrackList";
-import { PlayAllButton } from "@/components/client/TrackCard";
+import { PlayAllButton, ShuffleButton } from "@/components/client/TrackCard";
 import { Section } from "@/components/client/Section";
 import { Avatar, Cover } from "@/components/Cover";
 import Link from "next/link";
@@ -65,8 +65,9 @@ export default async function ArtistPage({
               {tracks.length} faixa(s)
               {totalPlays > 0 && ` • ${formatNumber(totalPlays)} reproduções`}
             </p>
-            <div className="mt-6">
+            <div className="mt-6 flex flex-wrap items-center gap-3">
               <PlayAllButton tracks={tracks} />
+              <ShuffleButton tracks={tracks} />
             </div>
           </div>
         </div>

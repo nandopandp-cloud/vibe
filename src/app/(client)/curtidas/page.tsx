@@ -1,7 +1,7 @@
 import { likedTracks, readDb } from "@/lib/db";
 import { currentUser } from "@/lib/auth";
 import { TrackList } from "@/components/client/TrackList";
-import { PlayAllButton } from "@/components/client/TrackCard";
+import { PlayAllButton, ShuffleButton } from "@/components/client/TrackCard";
 import { EmptyState, PageHeader } from "@/components/client/Section";
 import { formatTime } from "@/lib/utils";
 import * as I from "@/components/Icons";
@@ -32,6 +32,7 @@ export default async function LikedPage() {
         }
       >
         <PlayAllButton tracks={tracks} />
+        <ShuffleButton tracks={tracks} />
       </PageHeader>
 
       <div className="mt-8">

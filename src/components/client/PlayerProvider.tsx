@@ -10,7 +10,12 @@ import {
   useState,
 } from "react";
 import type { HydratedTrack } from "@/lib/types";
-import { registerPlay, toggleLike } from "@/lib/actions";
+import {
+  fetchAutoplay,
+  fetchShuffleAll,
+  registerPlay,
+  toggleLike,
+} from "@/lib/actions";
 
 type RepeatMode = "off" | "all" | "one";
 
@@ -28,10 +33,16 @@ type PlayerState = {
   liked: Set<string>;
   /** Fila visível no painel lateral: o que vem depois da faixa atual. */
   upNext: HydratedTrack[];
+  /** Buscando a continuação no servidor (fim da fila). */
+  loadingMore: boolean;
 };
 
 type PlayerApi = PlayerState & {
   playTrack: (track: HydratedTrack, context?: HydratedTrack[]) => void;
+  /** Toca uma lista embaralhada — usado pelos botões "Aleatório". */
+  playShuffled: (tracks: HydratedTrack[]) => void;
+  /** Fila aleatória com o catálogo inteiro. */
+  shuffleAll: () => void;
   toggle: () => void;
   next: () => void;
   prev: () => void;
@@ -54,15 +65,33 @@ export function usePlayer() {
   return ctx;
 }
 
-/** Embaralha preservando a faixa atual na primeira posição. */
-function shuffled<T>(items: T[], keepFirst: number): T[] {
-  const rest = items.filter((_, i) => i !== keepFirst);
-  for (let i = rest.length - 1; i > 0; i--) {
+/** Fisher-Yates numa cópia. */
+function shuffleCopy<T>(items: T[]): T[] {
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    [rest[i], rest[j]] = [rest[j], rest[i]];
+    [out[i], out[j]] = [out[j], out[i]];
   }
-  return [items[keepFirst], ...rest];
+  return out;
 }
+
+/** Embaralha preservando a faixa atual na primeira posição. */
+function shuffledFrom<T>(items: T[], keepFirst: number): T[] {
+  if (items.length === 0) return [];
+  const rest = items.filter((_, i) => i !== keepFirst);
+  return [items[keepFirst], ...shuffleCopy(rest)];
+}
+
+/** Remove duplicatas por id, mantendo a primeira ocorrência. */
+function dedupe(tracks: HydratedTrack[]): HydratedTrack[] {
+  const seen = new Set<string>();
+  return tracks.filter((t) => (seen.has(t.id) ? false : (seen.add(t.id), true)));
+}
+
+/** Quantas faixas ainda faltam antes de buscarmos mais no servidor. */
+const REFILL_THRESHOLD = 2;
+/** Quantos erros seguidos toleramos antes de parar de pular faixas. */
+const MAX_CONSECUTIVE_ERRORS = 3;
 
 export function PlayerProvider({
   children,
@@ -76,6 +105,12 @@ export function PlayerProvider({
   const sourceRef = useRef<HydratedTrack[]>([]);
   /** Evita contar a mesma reprodução duas vezes. */
   const countedRef = useRef<string | null>(null);
+  /** Impede buscas de continuação simultâneas. */
+  const refillingRef = useRef(false);
+  /** Ids já enfileirados alguma vez, para o autoplay não repetir. */
+  const historyRef = useRef<Set<string>>(new Set());
+  /** Faixas que falharam em sequência — corta o avanço em cascata. */
+  const failuresRef = useRef(0);
 
   const [queue, setQueue] = useState<HydratedTrack[]>([]);
   const [index, setIndex] = useState(-1);
@@ -87,8 +122,21 @@ export function PlayerProvider({
   const [shuffle, setShuffle] = useState(false);
   const [repeat, setRepeat] = useState<RepeatMode>("off");
   const [liked, setLiked] = useState<Set<string>>(new Set(initialLiked));
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const current = index >= 0 ? (queue[index] ?? null) : null;
+
+  /** Substitui a fila registrando os ids no histórico do autoplay. */
+  const installQueue = useCallback(
+    (tracks: HydratedTrack[], at: number, source?: HydratedTrack[]) => {
+      const list = dedupe(tracks);
+      sourceRef.current = source ? dedupe(source) : list;
+      historyRef.current = new Set(list.map((t) => t.id));
+      setQueue(list);
+      setIndex(Math.min(Math.max(at, 0), Math.max(list.length - 1, 0)));
+    },
+    [],
+  );
 
   /* ---------------- elemento de áudio ---------------- */
 
@@ -107,22 +155,22 @@ export function PlayerProvider({
       }
     };
     const onMeta = () => setDuration(el.duration || 0);
-    const onEnd = () => setPlaying(false); // o avanço é tratado abaixo
-    const onErr = () => setPlaying(false);
+    // Tocou de verdade: a cascata de erros recomeça do zero.
+    const onPlaying = () => {
+      failuresRef.current = 0;
+    };
 
+    el.addEventListener("playing", onPlaying);
     el.addEventListener("timeupdate", onTime);
     el.addEventListener("loadedmetadata", onMeta);
     el.addEventListener("durationchange", onMeta);
-    el.addEventListener("ended", onEnd);
-    el.addEventListener("error", onErr);
 
     return () => {
       el.pause();
+      el.removeEventListener("playing", onPlaying);
       el.removeEventListener("timeupdate", onTime);
       el.removeEventListener("loadedmetadata", onMeta);
       el.removeEventListener("durationchange", onMeta);
-      el.removeEventListener("ended", onEnd);
-      el.removeEventListener("error", onErr);
     };
   }, []);
 
@@ -155,47 +203,120 @@ export function PlayerProvider({
     else el.pause();
   }, [playing, current]);
 
+  /* ---------------- continuidade ---------------- */
+
+  /**
+   * Puxa a continuação do catálogo e devolve as faixas adicionadas.
+   * A cascata (mesmo artista → mesmo gênero → outros gêneros) roda no
+   * servidor, que é quem enxerga o acervo inteiro.
+   */
+  const refill = useCallback(async (): Promise<HydratedTrack[]> => {
+    const seed = queue[index] ?? queue[queue.length - 1];
+    if (!seed || refillingRef.current) return [];
+
+    refillingRef.current = true;
+    setLoadingMore(true);
+    try {
+      const more = await fetchAutoplay({
+        seedTrackId: seed.id,
+        excludeIds: [...historyRef.current],
+        limit: 20,
+        shuffle,
+      });
+      const fresh = more.filter((t) => !historyRef.current.has(t.id));
+      if (fresh.length === 0) return [];
+
+      for (const t of fresh) historyRef.current.add(t.id);
+      sourceRef.current = [...sourceRef.current, ...fresh];
+      setQueue((q) => [...q, ...fresh]);
+      return fresh;
+    } catch {
+      return [];
+    } finally {
+      refillingRef.current = false;
+      setLoadingMore(false);
+    }
+  }, [queue, index, shuffle]);
+
+  /** Mantém sempre algumas faixas à frente, para o play nunca engasgar. */
+  useEffect(() => {
+    if (index < 0 || queue.length === 0) return;
+    if (repeat !== "off") return; // repetindo, a fila se basta
+    if (queue.length - index - 1 > REFILL_THRESHOLD) return;
+    void refill();
+  }, [index, queue.length, repeat, refill]);
+
   /* ---------------- navegação ---------------- */
 
-  const next = useCallback(
-    (auto = false) => {
-      setIndex((i) => {
-        if (queue.length === 0) return i;
-        if (repeat === "one" && auto) {
-          const el = audioRef.current;
-          if (el) {
-            el.currentTime = 0;
-            void el.play().catch(() => {});
-          }
-          return i;
-        }
-        if (i < queue.length - 1) return i + 1;
-        if (repeat === "all") return 0;
-        if (auto) setPlaying(false);
-        return i;
-      });
+  /**
+   * Avança uma faixa. Com `auto`, veio do fim da música: aí respeitamos
+   * `repeat: "one"` e buscamos continuação em vez de parar.
+   */
+  const advance = useCallback(
+    async (auto: boolean) => {
+      const el = audioRef.current;
+
+      if (auto && repeat === "one" && el) {
+        el.currentTime = 0;
+        countedRef.current = queue[index]?.id ?? null;
+        void el.play().catch(() => setPlaying(false));
+        return;
+      }
+
+      if (index < queue.length - 1) {
+        setIndex(index + 1);
+        setPlaying(true);
+        return;
+      }
+
+      if (repeat === "all" && queue.length > 0) {
+        setIndex(0);
+        setPlaying(true);
+        return;
+      }
+
+      // Fim da fila: tenta a continuação automática antes de desistir.
+      const more = await refill();
+      if (more.length > 0) {
+        // A fila pode ter crescido enquanto esperávamos: avança a partir
+        // do tamanho real, não do que este closure viu.
+        setIndex((i) => i + 1);
+        setPlaying(true);
+      } else if (auto) {
+        setPlaying(false);
+      }
     },
-    [queue.length, repeat],
+    [index, queue, repeat, refill],
   );
 
-  /** O avanço automático mora aqui para enxergar o estado atual. */
+  /**
+   * O avanço automático mora num efeito para enxergar o estado atual —
+   * é o único listener de `ended`, para não competir com outro que pause.
+   */
   useEffect(() => {
     const el = audioRef.current;
     if (!el) return;
     const onEnded = () => {
-      if (repeat === "one") {
-        el.currentTime = 0;
-        void el.play().catch(() => {});
-        countedRef.current = current?.id ?? null;
+      failuresRef.current = 0;
+      void advance(true);
+    };
+    // Uma faixa quebrada não pode travar a fila, mas também não pode
+    // fazer o player varrer o catálogo inteiro em silêncio.
+    const onError = () => {
+      failuresRef.current += 1;
+      if (failuresRef.current > MAX_CONSECUTIVE_ERRORS) {
+        setPlaying(false);
         return;
       }
-      if (index < queue.length - 1) setIndex(index + 1);
-      else if (repeat === "all" && queue.length) setIndex(0);
-      else setPlaying(false);
+      void advance(true);
     };
     el.addEventListener("ended", onEnded);
-    return () => el.removeEventListener("ended", onEnded);
-  }, [index, queue.length, repeat, current?.id]);
+    el.addEventListener("error", onError);
+    return () => {
+      el.removeEventListener("ended", onEnded);
+      el.removeEventListener("error", onError);
+    };
+  }, [advance]);
 
   const playTrack = useCallback(
     (track: HydratedTrack, context?: HydratedTrack[]) => {
@@ -204,14 +325,35 @@ export function PlayerProvider({
         0,
         list.findIndex((t) => t.id === track.id),
       );
-      sourceRef.current = list;
-      const ordered = shuffle ? shuffled(list, at) : list;
-      setQueue(ordered);
-      setIndex(shuffle ? 0 : at);
+      if (shuffle) installQueue(shuffledFrom(list, at), 0, list);
+      else installQueue(list, at);
       setPlaying(true);
     },
-    [shuffle],
+    [shuffle, installQueue],
   );
+
+  const playShuffled = useCallback(
+    (tracks: HydratedTrack[]) => {
+      if (tracks.length === 0) return;
+      const order = shuffleCopy(tracks);
+      setShuffle(true);
+      installQueue(order, 0, tracks);
+      setPlaying(true);
+    },
+    [installQueue],
+  );
+
+  const shuffleAll = useCallback(() => {
+    setShuffle(true);
+    setLoadingMore(true);
+    void fetchShuffleAll(50)
+      .then((tracks) => {
+        if (tracks.length === 0) return;
+        installQueue(tracks, 0);
+        setPlaying(true);
+      })
+      .finally(() => setLoadingMore(false));
+  }, [installQueue]);
 
   const toggle = useCallback(() => {
     if (!current) return;
@@ -236,36 +378,49 @@ export function PlayerProvider({
     setTime(seconds);
   }, []);
 
+  /**
+   * Liga/desliga o aleatório. Ligado, embaralha o que ainda não tocou e
+   * mantém a faixa atual no ar; desligado, volta à ordem original.
+   */
   const toggleShuffle = useCallback(() => {
-    setShuffle((on) => {
-      const willShuffle = !on;
-      const source = sourceRef.current;
-      if (!source.length || index < 0) return willShuffle;
+    const willShuffle = !shuffle;
+    setShuffle(willShuffle);
 
-      const currentId = queue[index]?.id;
-      if (willShuffle) {
-        const at = source.findIndex((t) => t.id === currentId);
-        setQueue(shuffled(source, Math.max(0, at)));
-        setIndex(0);
-      } else {
-        setQueue(source);
-        setIndex(Math.max(0, source.findIndex((t) => t.id === currentId)));
-      }
-      return willShuffle;
-    });
-  }, [index, queue]);
+    const source = sourceRef.current;
+    const currentId = queue[index]?.id;
+
+    // Sem nada tocando, ligar o aleatório inicia a fila do catálogo inteiro.
+    if (!currentId) {
+      if (willShuffle) shuffleAll();
+      return;
+    }
+
+    if (willShuffle) {
+      const at = Math.max(
+        0,
+        source.findIndex((t) => t.id === currentId),
+      );
+      setQueue(shuffledFrom(source, at));
+      setIndex(0);
+    } else {
+      setQueue(source);
+      setIndex(
+        Math.max(
+          0,
+          source.findIndex((t) => t.id === currentId),
+        ),
+      );
+    }
+  }, [shuffle, queue, index, shuffleAll]);
 
   const cycleRepeat = useCallback(() => {
     setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"));
   }, []);
 
-  const removeFromQueue = useCallback(
-    (at: number) => {
-      setQueue((q) => q.filter((_, i) => i !== at));
-      setIndex((i) => (at < i ? i - 1 : i));
-    },
-    [],
-  );
+  const removeFromQueue = useCallback((at: number) => {
+    setQueue((q) => q.filter((_, i) => i !== at));
+    setIndex((i) => (at < i ? i - 1 : i));
+  }, []);
 
   const like = useCallback((trackId: string) => {
     // Otimista: a UI responde na hora, o servidor confirma depois.
@@ -279,6 +434,8 @@ export function PlayerProvider({
   }, []);
 
   /* ---------------- atalhos de teclado ---------------- */
+
+  const next = useCallback(() => void advance(false), [advance]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -332,10 +489,13 @@ export function PlayerProvider({
       shuffle,
       repeat,
       liked,
+      loadingMore,
       upNext: index >= 0 ? queue.slice(index + 1) : [],
       playTrack,
+      playShuffled,
+      shuffleAll,
       toggle,
-      next: () => next(false),
+      next,
       prev,
       seek,
       setVolume: (v: number) => {
@@ -355,8 +515,8 @@ export function PlayerProvider({
     }),
     [
       queue, index, current, playing, time, duration, volume, muted, shuffle,
-      repeat, liked, playTrack, toggle, next, prev, seek, toggleShuffle,
-      cycleRepeat, removeFromQueue, like,
+      repeat, liked, loadingMore, playTrack, playShuffled, shuffleAll, toggle,
+      next, prev, seek, toggleShuffle, cycleRepeat, removeFromQueue, like,
     ],
   );
 

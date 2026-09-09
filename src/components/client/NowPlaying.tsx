@@ -114,7 +114,11 @@ function QueuePanel() {
         <h2 className="mb-2 text-sm font-semibold text-ink">Próximas da fila</h2>
         {p.upNext.length === 0 ? (
           <p className="text-xs text-ink-3">
-            A fila terminou. Escolha um álbum ou playlist para continuar.
+            {p.loadingMore
+              ? "Procurando o que tocar em seguida…"
+              : p.current
+                ? "Quando esta acabar, o Sona continua com algo parecido."
+                : "Escolha um álbum ou playlist para começar."}
           </p>
         ) : (
           <ul className="space-y-1 overflow-y-auto">

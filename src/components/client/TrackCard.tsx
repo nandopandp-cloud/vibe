@@ -278,3 +278,31 @@ export function PlayAllButton({
     </button>
   );
 }
+
+/**
+ * Botão de aleatório dos cabeçalhos: embaralha a lista da página e começa
+ * a tocar. Deixa o modo aleatório ligado, então a continuação também vem
+ * embaralhada quando a lista acaba.
+ */
+export function ShuffleButton({
+  tracks,
+  label = "Aleatório",
+}: {
+  tracks: HydratedTrack[];
+  label?: string;
+}) {
+  const p = usePlayer();
+  if (tracks.length < 2) return null;
+
+  return (
+    <button
+      type="button"
+      onClick={() => p.playShuffled(tracks)}
+      aria-label={`${label} — embaralhar e tocar`}
+      className="inline-flex items-center gap-2 rounded-full border border-hairline px-5 py-3 text-sm font-semibold text-ink transition-all hover:scale-[1.03] hover:border-ink/60 hover:bg-surface"
+    >
+      <I.Shuffle className="h-[18px] w-[18px]" />
+      {label}
+    </button>
+  );
+}

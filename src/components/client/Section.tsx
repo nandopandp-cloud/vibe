@@ -114,7 +114,9 @@ export function PageHeader({
           {title}
         </h1>
         {meta && <div className="mt-3 text-sm text-ink-2">{meta}</div>}
-        {children && <div className="mt-6">{children}</div>}
+        {children && (
+          <div className="mt-6 flex flex-wrap items-center gap-3">{children}</div>
+        )}
       </div>
     </header>
   );

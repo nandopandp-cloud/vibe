@@ -1,11 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { mutate, newId, readDb } from "./db";
+import { hydrateAll, mutate, newId, readDb } from "./db";
 import { fileField, removeUpload, saveAudio, saveImage, UploadError } from "./storage";
 import { normalizeLyrics, parseTimecode } from "./utils";
 import { currentUser } from "./auth";
-import type { Database, LyricLine } from "./types";
+import type { Database, HydratedTrack, LyricLine, Track } from "./types";
 
 export type ActionState = { ok: boolean; message: string };
 
@@ -915,5 +915,92 @@ export async function registerPlay(trackId: string): Promise<void> {
     revalidatePath("/studio");
   } catch (e) {
     console.error(e);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Continuidade da reprodução                                          */
+/* ------------------------------------------------------------------ */
+
+/** Embaralha uma cópia (Fisher-Yates). */
+function shuffleCopy<T>(items: T[]): T[] {
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+/**
+ * Faixas para continuar tocando quando a fila acaba.
+ *
+ * A cascata segue o pedido do produto: primeiro o resto do artista (outros
+ * álbuns e singles), depois o mesmo gênero por outros artistas e, por fim,
+ * os demais gêneros — sempre pulando o que já está na fila, para não repetir.
+ */
+export async function fetchAutoplay(input: {
+  /** Faixa que acabou de terminar; define artista e gênero de partida. */
+  seedTrackId: string;
+  /** Ids já tocados/enfileirados, que não devem voltar. */
+  excludeIds?: string[];
+  /** Quantas faixas trazer de uma vez. */
+  limit?: number;
+  /** Em modo aleatório a cascata é embaralhada dentro de cada camada. */
+  shuffle?: boolean;
+}): Promise<HydratedTrack[]> {
+  try {
+    const user = await currentUser();
+    const db = await readDb();
+
+    const seed = db.tracks.find((t) => t.id === input.seedTrackId);
+    const limit = Math.max(1, Math.min(input.limit ?? 20, 100));
+    const skip = new Set(input.excludeIds ?? []);
+    skip.add(input.seedTrackId);
+
+    const pool = db.tracks.filter((t) => !skip.has(t.id) && t.audio);
+    if (pool.length === 0) return [];
+
+    const order = (list: Track[]) =>
+      input.shuffle
+        ? shuffleCopy(list)
+        : [...list].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+    const genre = seed?.genre?.trim().toLowerCase() ?? "";
+    const sameArtist: Track[] = [];
+    const sameGenre: Track[] = [];
+    const rest: Track[] = [];
+    for (const t of pool) {
+      if (seed && t.artistId === seed.artistId) sameArtist.push(t);
+      else if (genre && t.genre.trim().toLowerCase() === genre) sameGenre.push(t);
+      else rest.push(t);
+    }
+
+    // A última camada é sempre embaralhada: sem afinidade com a semente,
+    // uma ordem fixa faria todo mundo cair sempre na mesma faixa.
+    const chain = [...order(sameArtist), ...order(sameGenre), ...shuffleCopy(rest)];
+
+    return hydrateAll(db, chain.slice(0, limit), user?.id);
+  } catch (e) {
+    console.error(e);
+    return [];
+  }
+}
+
+/**
+ * Fila aleatória da plataforma inteira — o "aleatório geral" acionado
+ * quando o usuário liga o shuffle sem nada tocando.
+ */
+export async function fetchShuffleAll(
+  limit = 50,
+): Promise<HydratedTrack[]> {
+  try {
+    const user = await currentUser();
+    const db = await readDb();
+    const pool = db.tracks.filter((t) => t.audio);
+    return hydrateAll(db, shuffleCopy(pool).slice(0, limit), user?.id);
+  } catch (e) {
+    console.error(e);
+    return [];
   }
 }
