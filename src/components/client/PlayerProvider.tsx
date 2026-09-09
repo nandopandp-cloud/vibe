@@ -55,7 +55,25 @@ type PlayerApi = PlayerState & {
   removeFromQueue: (index: number) => void;
   like: (trackId: string) => void;
   isLiked: (trackId: string) => boolean;
+  /* --- saída de áudio --- */
+  /** Saídas disponíveis no computador; vazio até a permissão ser dada. */
+  outputs: AudioOutput[];
+  /** Id da saída em uso ("default" enquanto nada foi trocado). */
+  outputId: string;
+  /** Pede permissão e lista as saídas reais (nomes só vêm com permissão). */
+  loadOutputs: () => Promise<void>;
+  /** Manda o som para outra saída do computador. */
+  selectOutput: (deviceId: string) => Promise<void>;
+  /** `true` quando o navegador sabe redirecionar o áudio. */
+  canRouteAudio: boolean;
+  /** Estado do Chromecast/AirPlay: indisponível, pronto ou conectado. */
+  remoteState: "unavailable" | "available" | "connected";
+  /** Abre o seletor nativo de Cast/AirPlay do navegador. */
+  openRemotePicker: () => void;
 };
+
+/** Uma saída de áudio do sistema. */
+export type AudioOutput = { deviceId: string; label: string };
 
 const Ctx = createContext<PlayerApi | null>(null);
 
@@ -123,6 +141,10 @@ export function PlayerProvider({
   const [repeat, setRepeat] = useState<RepeatMode>("off");
   const [liked, setLiked] = useState<Set<string>>(new Set(initialLiked));
   const [loadingMore, setLoadingMore] = useState(false);
+  const [outputs, setOutputs] = useState<AudioOutput[]>([]);
+  const [outputId, setOutputId] = useState("default");
+  const [remoteState, setRemoteState] =
+    useState<"unavailable" | "available" | "connected">("unavailable");
 
   const current = index >= 0 ? (queue[index] ?? null) : null;
 
@@ -187,6 +209,11 @@ export function PlayerProvider({
 
     el.dataset.trackId = current.id;
     el.src = current.audio;
+    // Trocar a fonte pode devolver o som à saída padrão; reafirmamos a
+    // escolha do usuário para a faixa seguinte sair no mesmo lugar.
+    if (outputId !== "default" && "setSinkId" in el) {
+      void el.setSinkId(outputId).catch(() => {});
+    }
     setTime(0);
     setDuration(current.duration || 0);
     countedRef.current = current.id;
@@ -433,6 +460,112 @@ export function PlayerProvider({
     void toggleLike(trackId);
   }, []);
 
+  /* ---------------- saída de áudio ---------------- */
+
+  /**
+   * Redirecionar o áudio depende de `setSinkId`, que hoje existe no
+   * Chrome e no Edge. Onde não existe, o menu explica em vez de oferecer
+   * um controle que não faria nada.
+   */
+  const canRouteAudio =
+    typeof window !== "undefined" && "setSinkId" in HTMLMediaElement.prototype;
+
+  /**
+   * Lista as saídas do sistema.
+   *
+   * O navegador só revela os nomes ("Caixa de som", "Fones") depois de uma
+   * permissão de mídia — sem ela, viriam rótulos vazios. Por isso pedimos
+   * o microfone e o liberamos no mesmo instante: é o preço de descobrir
+   * como os aparelhos se chamam.
+   */
+  const loadOutputs = useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    try {
+      let devices = await navigator.mediaDevices.enumerateDevices();
+      const unnamed = devices.some(
+        (d) => d.kind === "audiooutput" && !d.label,
+      );
+      if (unnamed && navigator.mediaDevices.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+        });
+        // Desligamos na hora: queríamos a permissão, não o microfone.
+        for (const track of stream.getTracks()) track.stop();
+        devices = await navigator.mediaDevices.enumerateDevices();
+      }
+      setOutputs(
+        devices
+          .filter((d) => d.kind === "audiooutput")
+          .map((d, i) => ({
+            deviceId: d.deviceId,
+            label: d.label || `Saída ${i + 1}`,
+          })),
+      );
+    } catch {
+      // Permissão negada: seguimos com a saída padrão do sistema.
+      setOutputs([]);
+    }
+  }, []);
+
+  const selectOutput = useCallback(async (deviceId: string) => {
+    const el = audioRef.current;
+    if (!el || !("setSinkId" in el)) return;
+    try {
+      await el.setSinkId(deviceId);
+      setOutputId(deviceId);
+    } catch (e) {
+      console.error("[sona] não foi possível trocar a saída de áudio", e);
+    }
+  }, []);
+
+  /** Abre o seletor nativo de Chromecast/AirPlay. */
+  const openRemotePicker = useCallback(() => {
+    const el = audioRef.current;
+    if (!el?.remote) return;
+    void el.remote.prompt().catch(() => {});
+  }, []);
+
+  /**
+   * Observa se há algum aparelho de Cast/AirPlay por perto. O navegador
+   * avisa quando aparece ou some, então o botão só se oferece quando há
+   * de fato para onde mandar o som.
+   */
+  useEffect(() => {
+    const el = audioRef.current;
+    if (!el?.remote) return;
+
+    let watchId: number | undefined;
+    const sync = () =>
+      setRemoteState(
+        el.remote.state === "connected"
+          ? "connected"
+          : el.remote.state === "connecting"
+            ? "connected"
+            : "available",
+      );
+
+    el.remote
+      .watchAvailability((available) => {
+        setRemoteState(available ? "available" : "unavailable");
+      })
+      .then((id) => {
+        watchId = id;
+      })
+      .catch(() => {});
+
+    el.remote.addEventListener("connect", sync);
+    el.remote.addEventListener("connecting", sync);
+    el.remote.addEventListener("disconnect", sync);
+    return () => {
+      el.remote.removeEventListener("connect", sync);
+      el.remote.removeEventListener("connecting", sync);
+      el.remote.removeEventListener("disconnect", sync);
+      if (watchId !== undefined) {
+        void el.remote.cancelWatchAvailability(watchId).catch(() => {});
+      }
+    };
+  }, []);
+
   /* ---------------- atalhos de teclado ---------------- */
 
   const next = useCallback(() => void advance(false), [advance]);
@@ -512,11 +645,20 @@ export function PlayerProvider({
       removeFromQueue,
       like,
       isLiked: (id: string) => liked.has(id),
+      outputs,
+      outputId,
+      loadOutputs,
+      selectOutput,
+      canRouteAudio,
+      remoteState,
+      openRemotePicker,
     }),
     [
       queue, index, current, playing, time, duration, volume, muted, shuffle,
       repeat, liked, loadingMore, playTrack, playShuffled, shuffleAll, toggle,
       next, prev, seek, toggleShuffle, cycleRepeat, removeFromQueue, like,
+      outputs, outputId, loadOutputs, selectOutput, canRouteAudio,
+      remoteState, openRemotePicker,
     ],
   );
 

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePlayer } from "./PlayerProvider";
+import { DeviceMenu } from "./DeviceMenu";
 import { Cover } from "../Cover";
 import { cx, formatTime } from "@/lib/utils";
 import * as I from "../Icons";
@@ -230,9 +231,7 @@ export function PlayerBar({ onOpenNowPlaying }: { onOpenNowPlaying: () => void }
         >
           <I.Queue className="h-[18px] w-[18px]" />
         </IconButton>
-        <IconButton className="h-8 w-8" aria-label="Conectar dispositivo">
-          <I.Devices className="h-[18px] w-[18px]" />
-        </IconButton>
+        <DeviceMenu />
         <div className="flex items-center gap-1.5">
           <IconButton
             className="h-8 w-8"
