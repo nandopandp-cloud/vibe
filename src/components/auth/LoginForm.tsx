@@ -44,9 +44,7 @@ export function LoginForm({
       <header className="mb-8 flex items-start justify-between gap-6">
         <div>
           <h1 className="text-4xl font-bold leading-[1.15] tracking-tight text-ink">
-            Bem-vindo(a)
-            <br />
-            de volta!
+            Bem-vindo(a)!
           </h1>
           <p className="mt-4 text-sm leading-relaxed text-ink-2">
             Faça login para continuar no Sona
