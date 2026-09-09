@@ -7,6 +7,47 @@ import { cx, initials } from "@/lib/utils";
 import * as I from "../Icons";
 import type { PublicUser } from "@/lib/types";
 
+/**
+ * Foto do perfil, com as iniciais como reserva. A imagem do Google pode
+ * falhar (link expirado, offline), então o `onError` derruba para as
+ * iniciais em vez de deixar um quadrado vazio.
+ */
+export function UserAvatar({
+  user,
+  className,
+}: {
+  user: PublicUser;
+  className?: string;
+}) {
+  const [broken, setBroken] = useState(false);
+
+  if (user.image && !broken) {
+    return (
+      // O host do Google fica fora do allowlist do next/image, e otimizar
+      // um avatar de 32px não pagaria a configuração extra.
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={user.image}
+        alt=""
+        referrerPolicy="no-referrer"
+        onError={() => setBroken(true)}
+        className={cx("shrink-0 rounded-full object-cover", className)}
+      />
+    );
+  }
+
+  return (
+    <span
+      className={cx(
+        "grid shrink-0 place-items-center rounded-full bg-gradient-to-br from-dusk to-ocean font-bold text-ink",
+        className,
+      )}
+    >
+      {initials(user.name)}
+    </span>
+  );
+}
+
 /** Avatar + menu de conta no canto superior direito. */
 export function UserMenu({ user }: { user: PublicUser }) {
   const [open, setOpen] = useState(false);
@@ -37,9 +78,7 @@ export function UserMenu({ user }: { user: PublicUser }) {
         aria-expanded={open}
         className="flex items-center gap-2 rounded-full bg-surface py-1 pl-1 pr-3 transition-colors hover:bg-surface-2"
       >
-        <span className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-dusk to-ocean text-xs font-bold text-ink">
-          {initials(user.name)}
-        </span>
+        <UserAvatar user={user} className="h-8 w-8 text-xs" />
         <span className="hidden max-w-[120px] truncate text-sm font-medium text-ink sm:block">
           {user.name}
         </span>
@@ -57,8 +96,15 @@ export function UserMenu({ user }: { user: PublicUser }) {
           className="absolute right-0 top-[calc(100%+8px)] z-50 w-64 overflow-hidden rounded-xl border border-hairline bg-surface shadow-2xl shadow-black/50"
         >
           <div className="border-b border-hairline px-4 py-3">
-            <p className="truncate text-sm font-medium text-ink">{user.name}</p>
-            <p className="truncate text-xs text-ink-2">{user.email}</p>
+            <div className="mb-2 flex items-center gap-3">
+              <UserAvatar user={user} className="h-10 w-10 text-sm" />
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-ink">
+                  {user.name}
+                </p>
+                <p className="truncate text-xs text-ink-2">{user.email}</p>
+              </div>
+            </div>
             <span
               className={cx(
                 "mt-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium",

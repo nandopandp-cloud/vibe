@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { ensureSeedUsers } from "@/lib/auth";
+import { googleEnabled } from "@/lib/oauth-google";
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { RegisterForm } from "@/components/auth/RegisterForm";
 
@@ -13,7 +14,7 @@ export default async function RegisterPage() {
 
   return (
     <AuthLayout>
-      <RegisterForm />
+      <RegisterForm googleEnabled={googleEnabled} />
     </AuthLayout>
   );
 }

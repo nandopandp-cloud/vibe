@@ -62,6 +62,15 @@ function ensureSchema(): Promise<void> {
       )`;
     await sql`
       CREATE UNIQUE INDEX IF NOT EXISTS users_email_key ON users (lower(email))`;
+    // Login social: colunas acrescentadas depois do primeiro deploy, por
+    // isso bancos já existentes as recebem aqui. Conta do Google não tem
+    // senha, então `password_hash` deixa de ser obrigatória.
+    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS image TEXT`;
+    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT`;
+    await sql`ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL`;
+    await sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS users_google_id_key
+        ON users (google_id) WHERE google_id IS NOT NULL`;
     await sql`
       CREATE TABLE IF NOT EXISTS catalog (
         id         INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
@@ -98,7 +107,9 @@ type UserRow = {
   email: string;
   name: string;
   role: User["role"];
-  password_hash: string;
+  password_hash: string | null;
+  image: string | null;
+  google_id: string | null;
   created_at: Date | string;
 };
 
@@ -108,6 +119,8 @@ const toUser = (r: UserRow): User => ({
   name: r.name,
   role: r.role,
   passwordHash: r.password_hash,
+  image: r.image,
+  googleId: r.google_id,
   createdAt: new Date(r.created_at).toISOString(),
 });
 
@@ -119,7 +132,8 @@ export async function readDb(): Promise<Database> {
 
   const [catalogRows, userRows, likeRows] = await Promise.all([
     sql`SELECT data FROM catalog WHERE id = 1`,
-    sql`SELECT id, email, name, role, password_hash, created_at
+    sql`SELECT id, email, name, role, password_hash, image, google_id,
+               created_at
         FROM users ORDER BY created_at`,
     sql`SELECT user_id, track_id FROM likes ORDER BY liked_at`,
   ]);
@@ -189,20 +203,25 @@ async function syncUsers(before: User[], after: User[]) {
     const old = prev.get(user.id);
     if (!old) {
       await sql`
-        INSERT INTO users (id, email, name, role, password_hash, created_at)
+        INSERT INTO users (id, email, name, role, password_hash, image,
+                           google_id, created_at)
         VALUES (${user.id}, ${user.email}, ${user.name}, ${user.role},
-                ${user.passwordHash}, ${user.createdAt})
+                ${user.passwordHash}, ${user.image}, ${user.googleId},
+                ${user.createdAt})
         ON CONFLICT (id) DO NOTHING`;
     } else if (
       old.email !== user.email ||
       old.name !== user.name ||
       old.role !== user.role ||
-      old.passwordHash !== user.passwordHash
+      old.passwordHash !== user.passwordHash ||
+      old.image !== user.image ||
+      old.googleId !== user.googleId
     ) {
       await sql`
         UPDATE users
         SET email = ${user.email}, name = ${user.name},
-            role = ${user.role}, password_hash = ${user.passwordHash}
+            role = ${user.role}, password_hash = ${user.passwordHash},
+            image = ${user.image}, google_id = ${user.googleId}
         WHERE id = ${user.id}`;
     }
   }

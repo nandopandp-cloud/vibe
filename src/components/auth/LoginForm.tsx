@@ -11,8 +11,33 @@ import {
 } from "./AuthForm";
 import * as I from "../Icons";
 
-export function LoginForm({ next }: { next: string }) {
+/** Mensagens dos redirecionamentos de erro do fluxo OAuth. */
+const OAUTH_ERRORS: Record<string, string> = {
+  "google-indisponivel": "O login com Google não está configurado.",
+  "google-cancelado": "Login com Google cancelado.",
+  "google-invalido": "A sessão do login expirou. Tente de novo.",
+  "google-falhou": "Não foi possível entrar com o Google. Tente de novo.",
+};
+
+export function LoginForm({
+  next,
+  googleEnabled,
+  oauthError,
+}: {
+  next: string;
+  googleEnabled: boolean;
+  oauthError?: string;
+}) {
   const [state, action] = useActionState(login, null);
+  // Um erro vindo do OAuth chega pela URL, não pela action.
+  const shown =
+    state ??
+    (oauthError
+      ? {
+          ok: false,
+          message: OAUTH_ERRORS[oauthError] ?? "Não foi possível entrar.",
+        }
+      : null);
 
   return (
     <>
@@ -42,7 +67,7 @@ export function LoginForm({ next }: { next: string }) {
 
       <form action={action} className="space-y-5">
         <input type="hidden" name="next" value={next} />
-        <AuthError state={state} />
+        <AuthError state={shown} />
 
         <AuthField
           label="E-mail"
@@ -77,7 +102,7 @@ export function LoginForm({ next }: { next: string }) {
         <AuthSubmit>Entrar</AuthSubmit>
       </form>
 
-      <SocialButtons />
+      <SocialButtons enabled={googleEnabled} next={next} />
 
       {/* Contas de demonstração — remova este bloco antes de ir ao ar. */}
       <div className="mt-7 rounded-xl border border-hairline bg-surface/40 p-4">

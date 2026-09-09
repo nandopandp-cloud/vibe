@@ -3,10 +3,15 @@
 import { useActionState } from "react";
 import Link from "next/link";
 import { register } from "@/lib/auth-actions";
-import { AuthError, AuthField, AuthSubmit } from "./AuthForm";
+import {
+  AuthError,
+  AuthField,
+  AuthSubmit,
+  SocialButtons,
+} from "./AuthForm";
 import * as I from "../Icons";
 
-export function RegisterForm() {
+export function RegisterForm({ googleEnabled }: { googleEnabled: boolean }) {
   const [state, action] = useActionState(register, null);
 
   return (
@@ -79,6 +84,8 @@ export function RegisterForm() {
 
         <AuthSubmit>Criar conta</AuthSubmit>
       </form>
+
+      <SocialButtons enabled={googleEnabled} />
 
       <p className="mt-6 text-center text-xs leading-relaxed text-ink-3">
         Contas criadas por aqui entram como ouvintes. O acesso ao Studio é

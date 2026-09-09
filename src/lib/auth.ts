@@ -47,8 +47,9 @@ export async function hashPassword(password: string): Promise<string> {
 
 export async function verifyPassword(
   password: string,
-  stored: string,
+  stored: string | null,
 ): Promise<boolean> {
+  if (!stored) return false;
   const [salt, hash] = stored.split(":");
   if (!salt || !hash) return false;
   const key = await scrypt(password, salt, 64);
@@ -109,8 +110,9 @@ export async function endSession(): Promise<void> {
 }
 
 export function toPublic(user: User): PublicUser {
-  const { passwordHash: _omit, ...rest } = user;
-  void _omit;
+  const { passwordHash: _hash, googleId: _google, ...rest } = user;
+  void _hash;
+  void _google;
   return rest;
 }
 
@@ -152,6 +154,8 @@ export async function createUser(input: {
       name: input.name.trim() || email.split("@")[0],
       role: input.role,
       passwordHash,
+      image: null,
+      googleId: null,
       createdAt: new Date().toISOString(),
     };
     db.users.push(user);
@@ -198,5 +202,62 @@ export async function ensureSeedUsers(): Promise<void> {
     name: "Fernando",
     password: "12345",
     role: "user",
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Login social                                                        */
+/* ------------------------------------------------------------------ */
+
+/** Perfil normalizado do provedor — hoje só o Google. */
+export type SocialProfile = {
+  /** `sub` do Google: identificador estável da conta. */
+  providerId: string;
+  email: string;
+  name: string;
+  image: string | null;
+};
+
+/**
+ * Encontra ou cria o usuário correspondente a um perfil do Google.
+ *
+ * A busca é primeiro pelo `sub` (estável mesmo se a pessoa trocar o e-mail
+ * na conta Google) e depois pelo e-mail — é assim que uma conta antiga de
+ * senha passa a aceitar o login social sem perder curtidas nem o papel de
+ * admin. Vincular pelo e-mail só é seguro porque o Google nos diz que ele
+ * foi verificado; quem chama precisa ter checado isso antes.
+ */
+export async function findOrCreateSocialUser(
+  profile: SocialProfile,
+): Promise<PublicUser> {
+  const email = normalizeEmail(profile.email);
+
+  return mutate((db) => {
+    const existing =
+      db.users.find((u) => u.googleId === profile.providerId) ??
+      db.users.find((u) => u.email === email);
+
+    if (existing) {
+      // Mantém o vínculo e a foto em dia, mas não sobrescreve o nome:
+      // quem já se cadastrou aqui pode ter escolhido outro.
+      existing.googleId = profile.providerId;
+      existing.image = profile.image ?? existing.image;
+      return toPublic(existing);
+    }
+
+    const user: User = {
+      id: randomUUID().slice(0, 8),
+      email,
+      name: profile.name.trim() || email.split("@")[0],
+      // Como no cadastro público, quem chega pelo Google entra como ouvinte.
+      role: "user",
+      // Sem senha: esta conta só entra pelo provedor.
+      passwordHash: null,
+      image: profile.image,
+      googleId: profile.providerId,
+      createdAt: new Date().toISOString(),
+    };
+    db.users.push(user);
+    return toPublic(user);
   });
 }

@@ -8,13 +8,20 @@ export type User = {
   email: string;
   name: string;
   role: Role;
-  /** scrypt: "<salt hex>:<hash hex>" — nunca a senha em texto. */
-  passwordHash: string;
+  /**
+   * scrypt: "<salt hex>:<hash hex>" — nunca a senha em texto.
+   * `null` em contas que só entram pelo Google e nunca definiram senha.
+   */
+  passwordHash: string | null;
+  /** Foto de perfil: vem do Google no login social. */
+  image: string | null;
+  /** `sub` do Google, estável mesmo se a pessoa trocar de e-mail. */
+  googleId: string | null;
   createdAt: string;
 };
 
-/** O que a UI pode ver — sem o hash. */
-export type PublicUser = Omit<User, "passwordHash">;
+/** O que a UI pode ver — sem o hash nem o id do provedor social. */
+export type PublicUser = Omit<User, "passwordHash" | "googleId">;
 
 export type Artist = {
   id: string;

@@ -7,15 +7,17 @@ import { NextResponse, type NextRequest } from "next/server";
  * catálogo em disco — aqui só olhamos a presença do cookie.
  */
 
-const PUBLIC = ["/entrar", "/criar-conta"];
+const PUBLIC = ["/entrar", "/criar-conta", "/api/auth/"];
 
 export function proxy(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
   const hasSession = Boolean(req.cookies.get("sona_session")?.value);
   const isPublic = PUBLIC.some((p) => pathname.startsWith(p));
 
-  // Já autenticado não precisa ver login/cadastro.
-  if (hasSession && isPublic) {
+  // Já autenticado não precisa ver login/cadastro. As rotas de OAuth ficam
+  // de fora: trocar de conta Google exige chegar nelas já com sessão.
+  const isAuthApi = pathname.startsWith("/api/auth/");
+  if (hasSession && isPublic && !isAuthApi) {
     return NextResponse.redirect(new URL("/", req.url));
   }
 
