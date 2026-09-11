@@ -114,3 +114,19 @@ CREATE TABLE IF NOT EXISTS jam_invites (
 CREATE UNIQUE INDEX IF NOT EXISTS jam_invites_pair_key
   ON jam_invites (jam_id, to_id);
 CREATE INDEX IF NOT EXISTS jam_invites_to_idx ON jam_invites (to_id);
+
+-- Presença: o que cada pessoa está ouvindo agora.
+--
+-- Uma linha por usuário, sobrescrita a cada troca de faixa. O histórico
+-- não interessa aqui — a pergunta que esta tabela responde é "agora", e
+-- guardar o passado só faria a leitura ter de procurar o topo dele.
+--
+-- `updated_at` é o batimento: quem parou de mandar notícias há mais de
+-- um minuto simplesmente sai do ar, sem precisar de um "sair" explícito
+-- que uma aba fechada nunca chegaria a enviar.
+CREATE TABLE IF NOT EXISTS presence (
+  user_id    TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  track_id   TEXT,
+  playing    BOOLEAN NOT NULL DEFAULT false,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

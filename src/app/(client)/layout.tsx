@@ -4,9 +4,11 @@ import { currentUser } from "@/lib/auth";
 import { PlayerProvider } from "@/components/client/PlayerProvider";
 import { MyPlaylistsProvider } from "@/components/client/AddToPlaylist";
 import { JamProvider } from "@/components/client/JamProvider";
+import { PresenceProvider } from "@/components/client/PresenceProvider";
 import { Shell } from "@/components/client/Shell";
 import { readFriends } from "@/lib/friends-actions";
 import { readMyJam, readMyJamInvites } from "@/lib/jam-actions";
+import { readFriendsActivity } from "@/lib/presence-actions";
 
 export default async function ClientLayout({
   children,
@@ -18,12 +20,13 @@ export default async function ClientLayout({
   // adulterado ou de um usuário que não existe mais.
   if (!user) redirect("/entrar");
 
-  // As três leituras são independentes entre si e todas já passam pelo
+  // As leituras são independentes entre si e todas já passam pelo
   // `readDb` memoizado — em paralelo elas custam o mesmo que a mais lenta.
-  const [{ friends, incoming }, jamInvites, jam] = await Promise.all([
+  const [{ friends, incoming }, jamInvites, jam, activity] = await Promise.all([
     readFriends(),
     readMyJamInvites(),
     readMyJam(),
+    readFriendsActivity(),
   ]);
 
   const db = await readDb();
@@ -56,18 +59,20 @@ export default async function ClientLayout({
           trackIds: p.trackIds,
         }))}
       >
-        <JamProvider initialJam={jam}>
-          <Shell
-            playlists={editorial}
-            myPlaylists={mine}
-            user={user}
-            friends={friends}
-            jamInvites={jamInvites}
-            friendRequests={incoming}
-          >
-            {children}
-          </Shell>
-        </JamProvider>
+        <PresenceProvider initial={activity}>
+          <JamProvider initialJam={jam}>
+            <Shell
+              playlists={editorial}
+              myPlaylists={mine}
+              user={user}
+              friends={friends}
+              jamInvites={jamInvites}
+              friendRequests={incoming}
+            >
+              {children}
+            </Shell>
+          </JamProvider>
+        </PresenceProvider>
       </MyPlaylistsProvider>
     </PlayerProvider>
   );

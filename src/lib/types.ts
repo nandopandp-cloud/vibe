@@ -128,6 +128,44 @@ export type FriendEdge = {
 };
 
 /* ------------------------------------------------------------------ */
+/* Presença — quem está ouvindo agora                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * O que uma pessoa está ouvindo neste instante.
+ *
+ * Guardado como uma linha só por usuário, sobrescrita a cada troca de
+ * faixa: aqui não há histórico a manter, só um "agora" que envelhece.
+ *
+ * Não existe estado "offline" gravado. Quem fecha a aba não consegue
+ * avisar — o navegador simplesmente some — então a ausência é lida do
+ * relógio: `updatedAt` velho significa que a pessoa saiu, e é isso que
+ * faz a bolinha apagar sozinha sem depender de uma despedida.
+ */
+export type Presence = {
+  userId: string;
+  /** Faixa no ar. `null` quando a pessoa está por aqui sem tocar nada. */
+  trackId: string | null;
+  /** Pausado conta como online — a pessoa continua na frente da tela. */
+  playing: boolean;
+  /** Última notícia, em ISO. É dele que sai o online/offline. */
+  updatedAt: string;
+};
+
+/** Um amigo com o que ele está ouvindo, pronto para a tela. */
+export type FriendActivity = {
+  user: PublicUser;
+  /** `true` enquanto a última notícia é recente. */
+  online: boolean;
+  /** A faixa no ar, já com artista e álbum. `null` se não há nenhuma. */
+  track: HydratedTrack | null;
+  /** `true` quando a faixa está tocando de fato, e não em pausa. */
+  playing: boolean;
+  /** Quando a pessoa deu notícia pela última vez, em ISO. */
+  lastSeenAt: string | null;
+};
+
+/* ------------------------------------------------------------------ */
 /* Jam — escuta em conjunto                                            */
 /* ------------------------------------------------------------------ */
 

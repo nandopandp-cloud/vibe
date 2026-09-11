@@ -8,6 +8,7 @@ import {
   EMPTY_DB,
   type Artist,
   type Database,
+  type FriendActivity,
   type FriendEdge,
   type Friendship,
   type HydratedJamInvite,
@@ -192,6 +193,21 @@ function ensureSchema(): Promise<void> {
         ON jam_invites (jam_id, to_id)`;
     await sql`
       CREATE INDEX IF NOT EXISTS jam_invites_to_idx ON jam_invites (to_id)`;
+
+    // Presença: o que cada pessoa está ouvindo agora.
+    //
+    // Uma linha por usuário, sobrescrita a cada troca de faixa — o
+    // passado não interessa aqui, só o instante. Fica fora do documento
+    // do catálogo porque é escrita a cada poucos segundos por todo mundo
+    // que estiver ouvindo, e passar isso pelo JSONB reescreveria o
+    // acervo inteiro a cada batida.
+    await sql`
+      CREATE TABLE IF NOT EXISTS presence (
+        user_id    TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        track_id   TEXT,
+        playing    BOOLEAN NOT NULL DEFAULT false,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`;
 
     await sql`
       INSERT INTO catalog (id, data)
@@ -1163,4 +1179,124 @@ export function pendingInvitesFor(
         },
       ];
     });
+}
+
+/* ------------------------------------------------------------------ */
+/* Presença — quem está ouvindo agora                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Quanto tempo sem notícias antes de considerarmos a pessoa fora.
+ *
+ * Precisa ser confortavelmente maior que o intervalo do batimento do
+ * cliente — senão um pacote atrasado apagaria a bolinha de alguém que
+ * está ali, ouvindo. Com um batimento de 20s, um minuto dá margem para
+ * duas falhas seguidas antes de a ausência virar verdade.
+ */
+const ACTIVITY_WINDOW_MS = 60_000;
+
+/**
+ * Registra o que alguém está ouvindo.
+ *
+ * `updated_at` é medido aqui, e não no navegador: relógios de cliente
+ * discordam entre si em minutos, e é contra este mesmo relógio que a
+ * leitura decide quem ainda está online.
+ */
+export async function updatePresence(
+  userId: string,
+  state: { trackId: string | null; playing: boolean },
+): Promise<void> {
+  await ensureSchema();
+  await sql`
+    INSERT INTO presence (user_id, track_id, playing, updated_at)
+    VALUES (${userId}, ${state.trackId}, ${state.playing}, now())
+    ON CONFLICT (user_id) DO UPDATE
+      SET track_id = EXCLUDED.track_id,
+          playing = EXCLUDED.playing,
+          updated_at = now()`;
+}
+
+/** Apaga a presença — a pessoa saiu da conta. */
+export async function clearPresence(userId: string): Promise<void> {
+  await ensureSchema();
+  await sql`DELETE FROM presence WHERE user_id = ${userId}`;
+}
+
+/**
+ * O que os amigos de alguém estão ouvindo.
+ *
+ * A consulta é restrita aos amigos já dentro do SQL, e não filtrada
+ * depois em JS: a presença diz onde cada pessoa está a cada instante, e
+ * trazer a tabela inteira para o servidor de aplicação seria entregar
+ * isso de todo mundo para responder sobre uma dúzia.
+ *
+ * Quem nunca tocou nada não tem linha nenhuma aqui, e é por isso que a
+ * lista de amigos vem de `friendIds` e a presença é *acrescentada* a
+ * ela: um amigo sem presença aparece offline, e não some da tela.
+ */
+export async function readFriendActivity(
+  userId: string,
+): Promise<FriendActivity[]> {
+  await ensureSchema();
+
+  const db = await readDb();
+  const ids = friendIds(db, userId);
+  if (ids.length === 0) return [];
+
+  const rows = (await sql`
+    SELECT user_id, track_id, playing, updated_at
+    FROM presence
+    WHERE user_id = ANY(${ids})`) as Array<{
+    user_id: string;
+    track_id: string | null;
+    playing: boolean;
+    updated_at: Date | string;
+  }>;
+
+  const seen = new Map(rows.map((r) => [r.user_id, r]));
+  const byId = new Map(db.users.map((u) => [u.id, u]));
+  const cutoff = Date.now() - ACTIVITY_WINDOW_MS;
+
+  const list = ids.flatMap((id): FriendActivity[] => {
+    const user = byId.get(id);
+    // Conta apagada entre a leitura das amizades e esta: a linha cai por
+    // FK, mas uma leitura concorrente ainda pode ver o id.
+    if (!user) return [];
+
+    const row = seen.get(id);
+    const at = row ? new Date(row.updated_at).getTime() : 0;
+    const online = at >= cutoff;
+
+    // A faixa só é mostrada de quem está online. Uma presença velha
+    // descreve o passado, e "ouvindo" no presente é o que a tela promete.
+    const track =
+      online && row?.track_id
+        ? (db.tracks.find((t) => t.id === row.track_id) ?? null)
+        : null;
+
+    return [
+      {
+        user: toPublicUser(user),
+        online,
+        track: track ? hydrate(db, track, userId) : null,
+        playing: online ? Boolean(row?.playing) : false,
+        lastSeenAt: row ? new Date(row.updated_at).toISOString() : null,
+      },
+    ];
+  });
+
+  /**
+   * A ordem é a da tela, e não a do banco: quem está tocando alguma
+   * coisa primeiro, depois quem está online sem tocar, e os ausentes no
+   * fim. Ordenar por nome dentro de cada grupo mantém a lista estável —
+   * sem isso, um amigo pausar a música o faria saltar para outro lugar
+   * por causa de um empate desfeito ao acaso.
+   */
+  const rank = (f: FriendActivity) =>
+    f.online && f.track ? 0 : f.online ? 1 : 2;
+
+  return list.sort(
+    (a, b) =>
+      rank(a) - rank(b) || a.user.name.localeCompare(b.user.name, "pt-BR"),
+  );
 }

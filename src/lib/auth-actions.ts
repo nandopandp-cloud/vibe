@@ -10,6 +10,7 @@ import {
   normalizeEmail,
   startSession,
 } from "./auth";
+import { stopListening } from "./presence-actions";
 import type { ActionState } from "./actions";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -83,6 +84,10 @@ export async function register(
 }
 
 export async function logout(): Promise<void> {
+  // Sair da conta apaga a presença na hora: deixá-la expirar sozinha
+  // manteria a pessoa "ouvindo" para os amigos por mais um minuto depois
+  // de ela ter fechado a sessão de propósito.
+  await stopListening();
   await endSession();
   revalidatePath("/", "layout");
   redirect("/entrar");

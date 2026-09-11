@@ -20,6 +20,7 @@ import { UserMenu } from "./UserMenu";
 import { JamButton } from "./JamButton";
 import { JamBanner } from "./JamBanner";
 import { Notifications } from "./Notifications";
+import { useFriendsActivity } from "./PresenceProvider";
 
 const NAV = [
   { href: "/", label: "Início", icon: I.Home, activeIcon: I.HomeFilled },
@@ -40,11 +41,14 @@ function NavLink({
   label,
   Icon,
   active,
+  badge,
 }: {
   href: string;
   label: string;
   Icon: (p: React.SVGProps<SVGSVGElement>) => React.ReactElement;
   active: boolean;
+  /** Um número à direita, quando o item tem novidade a contar. */
+  badge?: React.ReactNode;
 }) {
   return (
     <Link
@@ -59,7 +63,30 @@ function NavLink({
     >
       <Icon className="h-[22px] w-[22px] shrink-0" />
       <span className="truncate">{label}</span>
+      {badge}
     </Link>
+  );
+}
+
+/**
+ * Quantos amigos estão online, ao lado do link.
+ *
+ * Some inteiro quando não há ninguém: um "0" permanente na sidebar é uma
+ * notícia ruim repetida o dia todo, e o vazio já diz a mesma coisa sem
+ * insistir.
+ */
+function OnlineBadge() {
+  const { onlineCount } = useFriendsActivity();
+  if (onlineCount === 0) return null;
+
+  return (
+    <span
+      className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-semibold text-accent"
+      aria-label={`${onlineCount} online`}
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+      {onlineCount}
+    </span>
   );
 }
 
@@ -158,6 +185,9 @@ export function Shell({
                     label={item.label}
                     Icon={item.icon}
                     active={isActive(item.href)}
+                    badge={
+                      item.href === "/amigos" ? <OnlineBadge /> : undefined
+                    }
                   />
                 </li>
               ))}

@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { UserAvatar } from "./UserMenu";
+import { FriendsActivityList } from "./FriendActivity";
+import { useFriendsActivity } from "./PresenceProvider";
 import {
   acceptFriendRequest,
   removeFriendship,
@@ -13,7 +15,7 @@ import {
 } from "@/lib/friends-actions";
 import { cx } from "@/lib/utils";
 import * as I from "../Icons";
-import type { FriendEdge, PublicUser } from "@/lib/types";
+import type { PublicUser } from "@/lib/types";
 
 /** Espera depois da última tecla antes de consultar o servidor. */
 const SEARCH_DEBOUNCE = 300;
@@ -222,25 +224,36 @@ function SearchPeople({ onChanged }: { onChanged: () => void }) {
 export function FriendsScreen({ initial }: { initial: FriendsView }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  // A lista de presença vem do provider, e não do `initial`: aceitar um
+  // pedido precisa fazer a pessoa aparecer já com a música dela, sem
+  // esperar a próxima batida do polling.
+  const { refresh: refreshActivity } = useFriendsActivity();
 
   const act = (fn: () => Promise<unknown>) =>
     startTransition(async () => {
       await fn();
+      refreshActivity();
       router.refresh();
     });
 
-  const { friends, incoming, outgoing } = initial;
+  const { incoming, outgoing } = initial;
 
   return (
     <div className="animate-rise space-y-8 px-6 pb-12 pt-2 md:px-8">
       <header>
         <h1 className="text-3xl font-bold tracking-tight text-ink">Amigos</h1>
         <p className="mt-1.5 text-sm text-ink-2">
-          Quem está por aqui com você — e quem pode entrar no próximo jam.
+          Quem está por aqui com você, o que estão ouvindo agora — e quem
+          pode entrar no próximo jam.
         </p>
       </header>
 
-      <SearchPeople onChanged={() => router.refresh()} />
+      <SearchPeople
+        onChanged={() => {
+          refreshActivity();
+          router.refresh();
+        }}
+      />
 
       {incoming.length > 0 && (
         <section>
@@ -279,31 +292,26 @@ export function FriendsScreen({ initial }: { initial: FriendsView }) {
       )}
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold text-ink">
-          Seus amigos{friends.length > 0 && ` (${friends.length})`}
-        </h2>
-        {friends.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-hairline px-6 py-10 text-center">
-            <I.Users className="mx-auto h-7 w-7 text-ink-3" />
-            <p className="mt-3 text-sm text-ink-2">
-              Você ainda não adicionou ninguém.
-            </p>
-            <p className="mt-1 text-xs text-ink-3">
-              Procure acima pelo nome ou pelo e-mail para começar.
-            </p>
-          </div>
-        ) : (
-          <ul className="space-y-0.5">
-            {friends.map((edge) => (
-              <FriendRow
-                key={edge.user.id}
-                edge={edge}
-                pending={pending}
-                onRemove={() => act(() => removeFriendship(edge.user.id))}
-              />
-            ))}
-          </ul>
-        )}
+        <h2 className="mb-2 text-sm font-semibold text-ink">Seus amigos</h2>
+        <FriendsActivityList
+          emptyHint={
+            <div className="rounded-xl border border-dashed border-hairline px-6 py-10 text-center">
+              <I.Users className="mx-auto h-7 w-7 text-ink-3" />
+              <p className="mt-3 text-sm text-ink-2">
+                Você ainda não adicionou ninguém.
+              </p>
+              <p className="mt-1 text-xs text-ink-3">
+                Procure acima pelo nome ou pelo e-mail para começar.
+              </p>
+            </div>
+          }
+          actions={(friend) => (
+            <RemoveFriend
+              pending={pending}
+              onRemove={() => act(() => removeFriendship(friend.user.id))}
+            />
+          )}
+        />
       </section>
 
       {outgoing.length > 0 && (
@@ -335,16 +343,14 @@ export function FriendsScreen({ initial }: { initial: FriendsView }) {
 }
 
 /**
- * Um amigo na lista. "Desfazer amizade" pede confirmação no próprio
- * botão: é destrutivo o bastante para não acontecer por um clique torto,
- * e leve o bastante para não merecer um diálogo por cima da tela.
+ * "Desfazer amizade" pede confirmação no próprio botão: é destrutivo o
+ * bastante para não acontecer por um clique torto, e leve o bastante
+ * para não merecer um diálogo por cima da tela.
  */
-function FriendRow({
-  edge,
+function RemoveFriend({
   pending,
   onRemove,
 }: {
-  edge: FriendEdge;
   pending: boolean;
   onRemove: () => void;
 }) {
@@ -356,22 +362,18 @@ function FriendRow({
     return () => clearTimeout(timer);
   }, [confirming]);
 
-  return (
-    <PersonRow user={edge.user} subtitle={edge.user.email}>
-      {confirming ? (
-        <ActionButton variant="danger" pending={pending} onClick={onRemove}>
-          <I.UserMinus className="h-4 w-4" />
-          Confirmar
-        </ActionButton>
-      ) : (
-        <ActionButton
-          variant="ghost"
-          pending={pending}
-          onClick={() => setConfirming(true)}
-        >
-          Desfazer amizade
-        </ActionButton>
-      )}
-    </PersonRow>
+  return confirming ? (
+    <ActionButton variant="danger" pending={pending} onClick={onRemove}>
+      <I.UserMinus className="h-4 w-4" />
+      Confirmar
+    </ActionButton>
+  ) : (
+    <ActionButton
+      variant="ghost"
+      pending={pending}
+      onClick={() => setConfirming(true)}
+    >
+      Desfazer amizade
+    </ActionButton>
   );
 }
