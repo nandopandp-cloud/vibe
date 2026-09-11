@@ -91,9 +91,13 @@ function QueuePanel() {
   const [over, setOver] = useState<number | null>(null);
 
   const following = Boolean(jam) && !isHost;
-  // Reordenar arrastando é do host e de quem ouve sozinho: no convidado
-  // a fila é a da sala, e um arrasto ali seria desfeito pelo polling.
-  const canReorder = !following;
+  /**
+   * Num jam, a fila é da sala e se edita num lugar só — o painel do jam,
+   * onde a ordem é publicada para todo mundo. Arrastar aqui mexeria
+   * apenas no player local e o polling desfaria em seguida, então esta
+   * lista fica em modo leitura enquanto houver sala.
+   */
+  const canReorder = !jam;
 
   return (
     <aside className="flex w-full flex-col gap-5 rounded-xl bg-surface/70 p-4 backdrop-blur lg:w-[320px]">
@@ -132,10 +136,10 @@ function QueuePanel() {
           )}
         </div>
 
-        {following && (
+        {jam && (
           <p className="mb-2 rounded-lg bg-dusk/10 px-3 py-2 text-[11px] leading-relaxed text-dusk">
-            Esta é a fila do jam. Clique numa faixa para pedir que ela
-            toque a seguir.
+            Esta é a fila do {jam.name}. Para reordenar ou tirar faixas,
+            abra o painel do jam.
           </p>
         )}
 
@@ -213,7 +217,7 @@ function QueuePanel() {
                         </span>
                       </span>
                     </button>
-                    {!following && (
+                    {!jam && (
                       <button
                         type="button"
                         onClick={() => p.removeFromQueue(at)}

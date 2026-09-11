@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { hydrateAll, mutate, newId, readDb } from "./db";
+import { hydrateAll, likedTracks, mutate, newId, readDb } from "./db";
 import { fileField, removeUpload, saveAudio, saveImage, UploadError } from "./storage";
 import { foldText, normalizeLyrics, parseLyrics } from "./utils";
 import { currentUser } from "./auth";
@@ -990,6 +990,57 @@ export async function fetchShuffleAll(
   } catch (e) {
     console.error(e);
     return [];
+  }
+}
+
+/**
+ * O que se oferece a quem quer pôr música no jam sem ter um nome em
+ * mente.
+ *
+ * Um campo de busca vazio pressupõe que a pessoa já sabe o que quer, e
+ * numa sala com amigos quase nunca sabe: a vontade é vaga ("põe alguma
+ * coisa boa"). Estas são as três listas de onde ela tiraria a música se
+ * estivesse navegando o app — as curtidas dela, o que tocou há pouco, e
+ * o catálogo recente. A busca continua existindo para quando o nome
+ * existe.
+ */
+export async function jamPickerSources(): Promise<{
+  liked: HydratedTrack[];
+  recent: HydratedTrack[];
+  fresh: HydratedTrack[];
+}> {
+  try {
+    const user = await currentUser();
+    const db = await readDb();
+    const playable = (t: Track) => Boolean(t.audio);
+
+    const liked = user ? likedTracks(db, user.id).slice(0, 30) : [];
+
+    // "Tocou há pouco" é a contagem de execuções: o acervo não guarda um
+    // histórico por pessoa, e o mais ouvido da casa é o palpite honesto
+    // mais próximo disso.
+    const recent = hydrateAll(
+      db,
+      [...db.tracks]
+        .filter(playable)
+        .sort((a, b) => b.plays - a.plays)
+        .slice(0, 30),
+      user?.id,
+    );
+
+    const fresh = hydrateAll(
+      db,
+      [...db.tracks]
+        .filter(playable)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 30),
+      user?.id,
+    );
+
+    return { liked, recent, fresh };
+  } catch (e) {
+    console.error(e);
+    return { liked: [], recent: [], fresh: [] };
   }
 }
 

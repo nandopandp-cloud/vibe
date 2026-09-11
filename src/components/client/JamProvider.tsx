@@ -17,6 +17,7 @@ import {
   moveJamTrackNext,
   pollJam,
   removeFromJam,
+  reorderJamQueue,
   reportJamPlayback,
   setJamQueue,
 } from "@/lib/jam-actions";
@@ -57,8 +58,10 @@ type JamApi = {
   playNext: (track: HydratedTrack) => Promise<string>;
   /** Pula direto para uma faixa da fila — só o host. */
   jumpTo: (track: HydratedTrack) => Promise<string>;
-  /** Tira uma faixa da fila — só o host. */
+  /** Tira uma faixa da fila — qualquer participante. */
   removeTrack: (track: HydratedTrack) => Promise<string>;
+  /** Reordena a fila inteira — qualquer participante. */
+  reorder: (trackIds: string[]) => Promise<string>;
   /** Sai do jam (encerra, se você for o host). */
   leave: () => Promise<void>;
   /** Força uma leitura agora, sem esperar o próximo polling. */
@@ -74,6 +77,7 @@ const Ctx = createContext<JamApi>({
   playNext: async () => OUTSIDE,
   jumpTo: async () => OUTSIDE,
   removeTrack: async () => OUTSIDE,
+  reorder: async () => OUTSIDE,
   leave: async () => {},
   sync: () => {},
 });
@@ -398,6 +402,21 @@ export function JamProvider({
     // polling, e reagir a ele religaria o modo seguidor sem necessidade.
   }, [jamId, isHost, setFollower]);
 
+  /**
+   * Dentro de um jam ninguém ganha faixa de graça — nem o host.
+   *
+   * O autoplay enche a fila com vinte faixas do catálogo assim que ela
+   * fica curta, e no host isso subia direto para a sala: a lista que as
+   * duas pessoas montaram à mão crescia sozinha com música que nenhuma
+   * das duas escolheu. A fila do jam é uma escolha, e quando ela acaba a
+   * resposta certa é o silêncio e um convite para acrescentar.
+   */
+  const setCurated = player.setCurated;
+  useEffect(() => {
+    setCurated(Boolean(jamId));
+    return () => setCurated(false);
+  }, [jamId, setCurated]);
+
   /* ---------------- ações ---------------- */
 
   /**
@@ -522,13 +541,33 @@ export function JamProvider({
   const removeTrack = useCallback(
     async (track: HydratedTrack) => {
       if (!jamId) return OUTSIDE;
-      if (!isHost) return "Só o anfitrião remove faixas.";
       return act(
         (q) => q.filter((t) => t.id !== track.id),
         () => removeFromJam(jamId, track.id),
       );
     },
-    [jamId, isHost, act],
+    [jamId, act],
+  );
+
+  /**
+   * Reordena a fila. A previsão local já mostra a ordem nova, então o
+   * arrasto termina onde a pessoa soltou e não dá o pulinho de voltar
+   * ao lugar antigo enquanto o servidor pensa.
+   */
+  const reorder = useCallback(
+    async (trackIds: string[]) => {
+      if (!jamId || !jam) return OUTSIDE;
+      const byId = new Map(jam.queue.map((t) => [t.id, t]));
+      const next = trackIds
+        .map((id) => byId.get(id))
+        .filter((t): t is HydratedTrack => Boolean(t));
+
+      return act(
+        () => next,
+        () => reorderJamQueue(jamId, trackIds),
+      );
+    },
+    [jamId, jam, act],
   );
 
   const leave = useCallback(async () => {
@@ -548,6 +587,7 @@ export function JamProvider({
         playNext,
         jumpTo,
         removeTrack,
+        reorder,
         leave,
         sync,
       }}

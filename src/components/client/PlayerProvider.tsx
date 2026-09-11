@@ -77,6 +77,13 @@ type PlayerApi = PlayerState & {
    * avanço no fim da faixa) porque quem decide é o host do jam.
    */
   setFollower: (value: boolean) => void;
+  /**
+   * Fila curada: o player não busca continuação no catálogo, mesmo
+   * podendo comandar a reprodução. É o host de um jam — a fila da sala é
+   * uma lista feita a mão pelas pessoas nela, e o autoplay a encheria de
+   * faixas que ninguém escolheu.
+   */
+  setCurated: (value: boolean) => void;
   like: (trackId: string) => void;
   isLiked: (trackId: string) => boolean;
   /* --- saída de áudio --- */
@@ -159,6 +166,14 @@ export function PlayerProvider({
    */
   const followerRef = useRef(false);
   const [follower, setFollowerState] = useState(false);
+  /**
+   * Fila curada: sem continuação automática. O seguidor também é curado
+   * (ele nem decide nada), mas o host de um jam é curado sem ser
+   * seguidor — comanda a reprodução e mesmo assim não deixa o autoplay
+   * escrever na lista da sala.
+   */
+  const curatedRef = useRef(false);
+  const [curated, setCuratedState] = useState(false);
 
   const [queue, setQueue] = useState<HydratedTrack[]>([]);
   const [index, setIndex] = useState(-1);
@@ -299,7 +314,9 @@ export function PlayerProvider({
     const seed = queue[index] ?? queue[queue.length - 1];
     // Num jam, a fila vem do host: inventar continuação aqui faria o
     // convidado ouvir uma música que ninguém mais na sala está ouvindo.
-    if (!seed || refillingRef.current || followerRef.current) return [];
+    if (!seed || refillingRef.current) return [];
+    // Fila curada: quem escolhe é a pessoa (ou a sala), não o catálogo.
+    if (followerRef.current || curatedRef.current) return [];
 
     refillingRef.current = true;
     setLoadingMore(true);
@@ -330,10 +347,11 @@ export function PlayerProvider({
   useEffect(() => {
     if (index < 0 || queue.length === 0) return;
     if (follower) return; // quem manda na fila é o host do jam
+    if (curated) return; // a fila é uma lista escolhida, não um fluxo
     if (repeat !== "off") return; // repetindo, a fila se basta
     if (queue.length - index - 1 > REFILL_THRESHOLD) return;
     void refill();
-  }, [index, queue.length, repeat, refill, follower]);
+  }, [index, queue.length, repeat, refill, follower, curated]);
 
   /* ---------------- navegação ---------------- */
 
@@ -618,6 +636,11 @@ export function PlayerProvider({
     setFollowerState(value);
   }, []);
 
+  const setCurated = useCallback((value: boolean) => {
+    curatedRef.current = value;
+    setCuratedState(value);
+  }, []);
+
   /* ---------------- saída de áudio ---------------- */
 
   /**
@@ -808,6 +831,7 @@ export function PlayerProvider({
       adoptQueue,
       setPlaying,
       setFollower,
+      setCurated,
       like,
       isLiked: (id: string) => liked.has(id),
       outputs,
@@ -823,7 +847,7 @@ export function PlayerProvider({
       repeat, liked, loadingMore, queueStamp,
       playTrack, playShuffled, shuffleAll, toggle,
       next, prev, seek, toggleShuffle, cycleRepeat, removeFromQueue, like,
-      moveInQueue, playNext, enqueue, adoptQueue, setFollower,
+      moveInQueue, playNext, enqueue, adoptQueue, setFollower, setCurated,
       outputs, outputId, loadOutputs, selectOutput, canRouteAudio,
       remoteState, openRemotePicker,
     ],

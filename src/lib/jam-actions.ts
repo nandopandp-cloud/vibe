@@ -367,6 +367,64 @@ export async function moveJamTrackNext(
 }
 
 /**
+ * Reordena a fila. Qualquer participante pode.
+ *
+ * Recebe a ordem desejada como lista de ids em vez de "mova X para a
+ * posição N": duas pessoas arrastando ao mesmo tempo produziriam
+ * índices que já não querem dizer nada quando chegam. Com a lista
+ * inteira, a última a chegar simplesmente vence, e ninguém fica com uma
+ * fila embaralhada por um meio-termo que nenhum dos dois pediu.
+ *
+ * A faixa que toca é ancorada aqui, no servidor: ela continua sendo a
+ * atual independentemente de para onde o arrasto a tenha empurrado na
+ * tela de quem mexeu.
+ */
+export async function reorderJamQueue(
+  jamId: string,
+  trackIds: string[],
+): Promise<ActionState> {
+  try {
+    const me = await currentUser();
+    if (!me) return DENY_ANON;
+
+    const jam = await findJam(jamId);
+    if (!jam) return { ok: false, message: "Este jam já terminou." };
+
+    const snapshot = await readJamSnapshot(jam.id, me.id);
+    if (!snapshot?.participants.some((p) => p.id === me.id)) {
+      return { ok: false, message: "Você não está neste jam." };
+    }
+
+    // A ordem que chega é uma *permutação* da fila, nunca uma fila nova:
+    // aceitar ids de fora daqui deixaria um reordenar virar um "troque
+    // tudo", que é outra permissão.
+    const known = new Set(jam.queue);
+    const seen = new Set<string>();
+    const next = trackIds.filter(
+      (id) => known.has(id) && !seen.has(id) && (seen.add(id), true),
+    );
+    // O que o cliente não mencionou (porque chegou entre o arrasto e o
+    // envio) continua na fila, no fim — perder faixa por atraso de rede
+    // seria pior que uma ordem imperfeita.
+    for (const id of jam.queue) if (!seen.has(id)) next.push(id);
+
+    const playingId = jam.queue[Math.max(jam.index, 0)];
+    const at = playingId ? next.indexOf(playingId) : 0;
+
+    await replaceJamQueue(jam.id, next, Math.max(at, 0), {
+      // Reordenar não é trocar de faixa: a atual segue de onde está.
+      position:
+        jam.position + (jam.playing ? (Date.now() - jam.positionAt) / 1000 : 0),
+      playing: jam.playing,
+    });
+
+    return { ok: true, message: "Fila reordenada." };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
  * Pula direto para uma faixa da fila. Só o host — é o relógio dele que a
  * sala segue, e dois ponteiros discordando soaria como um corte.
  */
@@ -442,7 +500,17 @@ export async function addToJamQueue(
   }
 }
 
-/** Tira uma faixa da fila. Só o host, para a sala não brigar pela fila. */
+/**
+ * Tira uma faixa da fila. Qualquer participante pode.
+ *
+ * A fila é uma lista que as pessoas da sala montam juntas, e uma lista
+ * colaborativa em que só um lado apaga não é colaborativa: quem
+ * acrescentou por engano ficaria dependendo do host para desfazer.
+ *
+ * A que está tocando é a exceção, e não por hierarquia — tirar o chão de
+ * quem está no ar cortaria o áudio de todo mundo. Para passar adiante
+ * existe "próxima", que é o host quem dá.
+ */
 export async function removeFromJam(
   jamId: string,
   trackId: string,
@@ -453,8 +521,14 @@ export async function removeFromJam(
 
     const jam = await findJam(jamId);
     if (!jam) return { ok: false, message: "Este jam já terminou." };
-    if (jam.hostId !== me.id) {
-      return { ok: false, message: "Só quem abriu o jam remove faixas." };
+
+    const snapshot = await readJamSnapshot(jam.id, me.id);
+    if (!snapshot?.participants.some((p) => p.id === me.id)) {
+      return { ok: false, message: "Você não está neste jam." };
+    }
+
+    if (jam.queue[Math.max(jam.index, 0)] === trackId) {
+      return { ok: false, message: "Esta faixa está tocando agora." };
     }
 
     await removeFromJamQueue(jam.id, trackId);

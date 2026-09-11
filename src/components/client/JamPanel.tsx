@@ -12,8 +12,8 @@ import { useJam } from "./JamProvider";
 import { usePlayer } from "./PlayerProvider";
 import { UserAvatar } from "./UserMenu";
 import { Cover } from "../Cover";
-import { inviteFriendToJam, setJamQueue } from "@/lib/jam-actions";
-import { searchTracks } from "@/lib/actions";
+import { inviteFriendToJam } from "@/lib/jam-actions";
+import { jamPickerSources, searchTracks } from "@/lib/actions";
 import { cx, formatTime } from "@/lib/utils";
 import * as I from "../Icons";
 import type { FriendEdge, HydratedTrack, JamParticipant } from "@/lib/types";
@@ -357,11 +357,10 @@ function QueueRow({
  * de antes?" — sem a qual só resta perguntar em voz alta.
  */
 function JamQueue({ onAdd }: { onAdd: () => void }) {
-  const { jam, isHost, playNext, jumpTo, removeTrack } = useJam();
+  const { jam, isHost, playNext, jumpTo, removeTrack, reorder } = useJam();
   const [note, setNote] = useState<string | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<{ id: string; below: boolean } | null>(null);
-  const [reordering, setReordering] = useState(false);
 
   // A confirmação some sozinha: ela informa, não pede resposta.
   useEffect(() => {
@@ -371,20 +370,23 @@ function JamQueue({ onAdd }: { onAdd: () => void }) {
   }, [note]);
 
   /**
-   * Solta a faixa arrastada na posição de destino e publica a ordem.
+   * Solta a faixa arrastada na posição de destino.
    *
-   * `useCallback` aqui não é memoização: é o que diz ao React que o
-   * corpo só roda a partir de um evento, e não durante o render — o
-   * relógio lido lá dentro seria impuro se fosse de outro jeito. Por
-   * isso também fica acima do `return` que checa a sala: hook nenhum
-   * pode ficar atrás de uma saída antecipada.
+   * Manda a ordem inteira, e não "mova X para N": duas pessoas
+   * arrastando ao mesmo tempo produziriam índices que já não querem
+   * dizer nada quando chegam ao servidor.
+   *
+   * `useCallback` aqui não é memoização — é o que diz ao React que o
+   * corpo só roda a partir de um evento. Por isso também fica acima do
+   * `return` que checa a sala: hook nenhum pode ficar atrás de uma saída
+   * antecipada.
    */
   const drop = useCallback(
     (targetId: string, below: boolean) => {
       const fromId = dragging;
       setDragging(null);
       setOver(null);
-      if (!jam || !fromId || fromId === targetId || !isHost) return;
+      if (!jam || !fromId || fromId === targetId) return;
 
       const ids = jam.queue.map((t) => t.id);
       const rest = ids.filter((id) => id !== fromId);
@@ -392,22 +394,9 @@ function JamQueue({ onAdd }: { onAdd: () => void }) {
       if (anchor < 0) return;
       rest.splice(below ? anchor + 1 : anchor, 0, fromId);
 
-      const playingId = ids[Math.max(jam.index, 0)];
-      setReordering(true);
-      void setJamQueue({
-        jamId: jam.id,
-        trackIds: rest,
-        index: Math.max(rest.indexOf(playingId ?? rest[0]), 0),
-        // Reordenar não é trocar de faixa: a atual segue de onde está.
-        position:
-          jam.position +
-          (jam.playing ? (Date.now() - jam.positionAt) / 1000 : 0),
-        playing: jam.playing,
-      })
-        .catch(() => {})
-        .finally(() => setReordering(false));
+      void reorder(rest).then(setNote);
     },
-    [jam, isHost, dragging],
+    [jam, dragging, reorder],
   );
 
   if (!jam) return null;
@@ -446,8 +435,9 @@ function JamQueue({ onAdd }: { onAdd: () => void }) {
       )}
 
       <p className="mb-2 px-1 text-[11px] leading-relaxed text-ink-3">
+        Arraste para reordenar, X para tirar da fila.{" "}
         {isHost
-          ? "Clique para tocar agora, ou arraste para reordenar. A sala acompanha você."
+          ? "Clique numa faixa para tocá-la agora."
           : "Clique numa faixa para pedir que ela toque a seguir."}
       </p>
 
@@ -468,17 +458,18 @@ function JamQueue({ onAdd }: { onAdd: () => void }) {
               track={track}
               position={i + 1}
               state={state}
-              canReorder={isHost && jam.queue.length > 1}
-              busy={reordering}
+              canReorder={jam.queue.length > 1}
+              busy={false}
               onPlay={() => {
                 if (state === "playing") return;
                 void (isHost ? jumpTo(track) : playNext(track)).then(setNote);
               }}
               onPlayNext={() => void playNext(track).then(setNote)}
               onRemove={
-                isHost && state !== "playing"
-                  ? () => void removeTrack(track).then(setNote)
-                  : null
+                // A que toca fica: tirá-la cortaria o áudio da sala.
+                state === "playing"
+                  ? null
+                  : () => void removeTrack(track).then(setNote)
               }
               drag={{
                 dragging: dragging === track.id,
@@ -495,7 +486,7 @@ function JamQueue({ onAdd }: { onAdd: () => void }) {
                   e.dataTransfer.setData("text/plain", track.id);
                 },
                 onDragOver: (e) => {
-                  if (!isHost || !dragging || dragging === track.id) return;
+                  if (!dragging || dragging === track.id) return;
                   e.preventDefault();
                   e.dataTransfer.dropEffect = "move";
                   const box = e.currentTarget.getBoundingClientRect();
@@ -519,6 +510,16 @@ function JamQueue({ onAdd }: { onAdd: () => void }) {
         })}
       </ul>
 
+      {/* Num jam a fila não se enche sozinha: quando a última acaba, a
+          sala fica em silêncio de propósito. Dizer isso antes evita que
+          o fim pareça defeito. */}
+      {at >= jam.queue.length - 1 && (
+        <p className="mt-3 px-1 text-[11px] leading-relaxed text-ink-3">
+          Esta é a última da fila. Quando ela acabar, a sala espera —
+          acrescente mais para a música continuar.
+        </p>
+      )}
+
       {/* O convite para acrescentar fica no fim da fila, que é onde o
           olho chega depois de ler o que já tem — e onde a música nova
           vai parar. */}
@@ -538,25 +539,113 @@ function JamQueue({ onAdd }: { onAdd: () => void }) {
 /* Adicionar faixas                                                    */
 /* ------------------------------------------------------------------ */
 
+/** Uma faixa oferecida para entrar na fila. */
+function PickRow({
+  track,
+  already,
+  note,
+  onAdd,
+  onPlayNext,
+  playNextLabel,
+}: {
+  track: HydratedTrack;
+  already: boolean;
+  note?: string;
+  onAdd: () => void;
+  onPlayNext: () => void;
+  playNextLabel: string;
+}) {
+  return (
+    <li className="group flex items-center gap-3 rounded-lg px-1 py-1.5 transition-colors hover:bg-surface-2">
+      <Cover
+        src={track.cover}
+        seed={track.id}
+        name={track.title}
+        className="h-10 w-10 shrink-0 rounded"
+      />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm text-ink">{track.title}</p>
+        <p className="truncate text-xs text-ink-3">
+          {note ??
+            (already
+              ? "Já está na fila"
+              : (track.artist?.name ?? "Artista desconhecido"))}
+        </p>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-1">
+        <button
+          type="button"
+          onClick={onPlayNext}
+          aria-label={`Tocar ${track.title} a seguir`}
+          title={playNextLabel}
+          className="rounded-full p-1.5 text-ink-3 opacity-0 transition-opacity hover:text-dusk focus-visible:opacity-100 group-hover:opacity-100"
+        >
+          <I.Next className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          disabled={already}
+          onClick={onAdd}
+          aria-label={`Adicionar ${track.title} à fila do jam`}
+          className={cx(
+            "rounded-full p-1.5 transition-colors",
+            already
+              ? "text-accent"
+              : "text-ink-2 hover:bg-dusk/15 hover:text-dusk",
+          )}
+        >
+          {already ? (
+            <I.Check className="h-4 w-4" />
+          ) : (
+            <I.Plus className="h-4 w-4" />
+          )}
+        </button>
+      </div>
+    </li>
+  );
+}
+
+type Source = "curtidas" | "tocadas" | "novas";
+
 /**
- * A busca dentro do painel.
+ * Como a música entra na fila do jam.
  *
- * Antes, acrescentar uma música ao jam só era possível pelo menu "⋯" de
- * uma faixa espalhada pelo app — quem abrisse o painel procurando por
- * isso não encontrava nada, porque a ação não morava onde a fila mora.
- * Aqui a pergunta e a resposta ficam no mesmo lugar.
+ * A primeira versão disto era só um campo de busca, e um campo de busca
+ * vazio pressupõe que a pessoa já sabe o nome do que quer. Numa sala com
+ * amigos a vontade costuma ser vaga — "põe alguma coisa" — então o que
+ * abre agora são as listas de onde ela tiraria a música se estivesse
+ * navegando o app. A busca continua aqui, para quando o nome existe.
  */
 function AddTracks() {
   const { jam, isHost, addTrack, playNext } = useJam();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<HydratedTrack[]>([]);
   const [searching, setSearching] = useState(false);
+  const [sources, setSources] = useState<{
+    liked: HydratedTrack[];
+    recent: HydratedTrack[];
+    fresh: HydratedTrack[];
+  } | null>(null);
+  const [source, setSource] = useState<Source>("curtidas");
   const [done, setDone] = useState<Record<string, string>>({});
   /** Descarta respostas de buscas já superadas pelo que se digitou. */
   const latest = useRef(0);
 
   const term = query.trim();
   const active = term.length >= 2;
+
+  // As listas vêm uma vez, na abertura: elas não mudam durante a sala, e
+  // recarregá-las a cada tecla só atrapalharia a busca.
+  useEffect(() => {
+    let alive = true;
+    void jamPickerSources().then((s) => {
+      if (alive) setSources(s);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!active) return;
@@ -583,9 +672,39 @@ function AddTracks() {
   if (!jam) return null;
 
   const inQueue = new Set(jam.queue.map((t) => t.id));
-  // Uma busca curta não guarda resultado nenhum: derivar aqui evita o
-  // efeito extra que só serviria para limpar a lista.
-  const shown = active ? results : [];
+  const playNextLabel = isHost
+    ? "Tocar a seguir"
+    : "Pedir para tocar a seguir";
+
+  const browse: HydratedTrack[] =
+    source === "curtidas"
+      ? (sources?.liked ?? [])
+      : source === "tocadas"
+        ? (sources?.recent ?? [])
+        : (sources?.fresh ?? []);
+
+  // Buscando, a busca manda; parado, a lista escolhida.
+  const shown = active ? results : browse;
+
+  const row = (track: HydratedTrack) => (
+    <PickRow
+      key={track.id}
+      track={track}
+      already={inQueue.has(track.id)}
+      note={done[track.id]}
+      playNextLabel={playNextLabel}
+      onAdd={() =>
+        void addTrack(track).then((m) =>
+          setDone((d) => ({ ...d, [track.id]: m })),
+        )
+      }
+      onPlayNext={() =>
+        void playNext(track).then((m) =>
+          setDone((d) => ({ ...d, [track.id]: m })),
+        )
+      }
+    />
+  );
 
   return (
     <div>
@@ -594,9 +713,8 @@ function AddTracks() {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Buscar faixa para o jam"
+          placeholder="Buscar por título, artista ou álbum"
           aria-label="Buscar faixa para adicionar ao jam"
-          autoFocus
           className="h-11 w-full rounded-full bg-surface-2 pl-10 pr-9 text-sm text-ink placeholder:text-ink-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-dusk/40"
         />
         {query && (
@@ -611,88 +729,48 @@ function AddTracks() {
         )}
       </div>
 
-      {!active ? (
-        <p className="mt-4 px-1 text-xs leading-relaxed text-ink-3">
-          Procure por título, artista, álbum ou gênero. Qualquer pessoa da
-          sala pode acrescentar música — o que entrar aqui toca para todo
-          mundo.
-        </p>
-      ) : searching && shown.length === 0 ? (
+      {/* Sem busca ativa, as listas de onde a música costuma sair. */}
+      {!active && (
+        <div className="mt-3 flex gap-1.5">
+          {(
+            [
+              ["curtidas", "Curtidas"],
+              ["tocadas", "Mais tocadas"],
+              ["novas", "Novidades"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setSource(id)}
+              aria-pressed={source === id}
+              className={cx(
+                "rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
+                source === id
+                  ? "bg-dusk/20 text-dusk"
+                  : "bg-surface-2 text-ink-3 hover:text-ink-2",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {active && searching && shown.length === 0 ? (
         <p className="mt-4 px-1 text-xs text-ink-3">Procurando…</p>
       ) : shown.length === 0 ? (
-        <p className="mt-4 px-1 text-xs text-ink-3">
-          Nada encontrado para “{term}”.
+        <p className="mt-4 px-1 text-xs leading-relaxed text-ink-3">
+          {active
+            ? `Nada encontrado para “${term}”.`
+            : !sources
+              ? "Carregando…"
+              : source === "curtidas"
+                ? "Você ainda não curtiu nenhuma faixa. Experimente as outras listas ou busque pelo nome."
+                : "Nada por aqui ainda."}
         </p>
       ) : (
-        <ul className="mt-3 space-y-0.5">
-          {shown.map((track) => {
-            const already = inQueue.has(track.id);
-            const note = done[track.id];
-
-            return (
-              <li
-                key={track.id}
-                className="group flex items-center gap-3 rounded-lg px-1 py-1.5 transition-colors hover:bg-surface-2"
-              >
-                <Cover
-                  src={track.cover}
-                  seed={track.id}
-                  name={track.title}
-                  className="h-10 w-10 shrink-0 rounded"
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm text-ink">{track.title}</p>
-                  <p className="truncate text-xs text-ink-3">
-                    {note ??
-                      (already
-                        ? "Já está na fila"
-                        : (track.artist?.name ?? "Artista desconhecido"))}
-                  </p>
-                </div>
-
-                <div className="flex shrink-0 items-center gap-1">
-                  {/* "A seguir" ao lado de "adicionar": as duas coisas que
-                      se quer fazer com uma faixa achada numa sala. */}
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void playNext(track).then((m) =>
-                        setDone((d) => ({ ...d, [track.id]: m })),
-                      )
-                    }
-                    aria-label={`Tocar ${track.title} a seguir`}
-                    title={isHost ? "Tocar a seguir" : "Pedir para tocar a seguir"}
-                    className="rounded-full p-1.5 text-ink-3 opacity-0 transition-opacity hover:text-dusk focus-visible:opacity-100 group-hover:opacity-100"
-                  >
-                    <I.Next className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    disabled={already}
-                    onClick={() =>
-                      void addTrack(track).then((m) =>
-                        setDone((d) => ({ ...d, [track.id]: m })),
-                      )
-                    }
-                    aria-label={`Adicionar ${track.title} à fila do jam`}
-                    className={cx(
-                      "rounded-full p-1.5 transition-colors",
-                      already
-                        ? "text-accent"
-                        : "text-ink-2 hover:bg-dusk/15 hover:text-dusk",
-                    )}
-                  >
-                    {already ? (
-                      <I.Check className="h-4 w-4" />
-                    ) : (
-                      <I.Plus className="h-4 w-4" />
-                    )}
-                  </button>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+        <ul className="mt-3 space-y-0.5">{shown.map(row)}</ul>
       )}
     </div>
   );

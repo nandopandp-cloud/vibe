@@ -121,18 +121,25 @@ export function JamButton({
   }, [open]);
 
   /**
-   * Abre a sala já com o que estiver tocando.
+   * Abre a sala com a música que está tocando — e só com ela.
    *
-   * Quem clica em "iniciar jam" no meio de uma música quer ouvir *aquela*
-   * música acompanhado — começar do zero obrigaria a procurar tudo de
-   * novo. Sem nada tocando, a sala nasce vazia e o host escolhe depois.
+   * Quem clica em "iniciar jam" no meio de uma faixa quer ouvir *aquela*
+   * faixa acompanhado. Mandar a fila inteira do player parecia generoso,
+   * mas a fila do player não é uma escolha: o autoplay a enche de vinte
+   * faixas do catálogo assim que a atual começa, e a sala nascia com uma
+   * lista aleatória que ninguém tinha pedido — e que o convidado não
+   * conseguia distinguir do que o amigo escolheu de propósito.
+   *
+   * A fila do jam é uma lista feita a mão, pelas duas pessoas. Começa
+   * com uma música e cresce por decisão, não por inércia.
    */
   const start = () =>
     startTransition(async () => {
       setError(null);
+      const current = player.current;
       const res = await createJam({
-        trackIds: player.queue.map((t) => t.id),
-        index: Math.max(player.index, 0),
+        trackIds: current ? [current.id] : [],
+        index: 0,
       });
       if (!res.ok) {
         setError(res.message);
