@@ -10,6 +10,12 @@ import {
   toPublicUser,
 } from "./db";
 import { foldText } from "./utils";
+import { sendMail } from "./email";
+import {
+  friendInviteHtml,
+  friendInviteSubject,
+  friendInviteText,
+} from "./email-templates";
 import type { ActionState } from "./actions";
 import type { FriendEdge, PublicUser } from "./types";
 
@@ -102,9 +108,15 @@ export async function sendFriendRequest(
       return { ok: false, message: "Você já é sua melhor companhia." };
     }
 
+    // O destinatário é capturado dentro da transação e usado depois, já
+    // fora dela: o e-mail é uma consequência do convite ter sido criado,
+    // e não pode rodar enquanto a escrita está aberta.
+    let recipient: { email: string; name: string } | null = null;
+
     const result = await mutate((db) => {
       const target = db.users.find((u) => u.id === targetId);
       if (!target) return "missing" as const;
+      recipient = { email: target.email, name: target.name };
 
       const existing = friendshipBetween(db, me.id, targetId);
       if (existing?.status === "accepted") return "already" as const;
@@ -139,6 +151,23 @@ export async function sendFriendRequest(
       return { ok: true, message: "Pedido já enviado — aguardando resposta." };
     }
 
+    /**
+     * O aviso por e-mail.
+     *
+     * Só quando um pedido *novo* nasce: aceitar um convite cruzado
+     * (`accepted`) não é um convite chegando, e mandar "fulano quer se
+     * conectar" para quem acabou de ser aceito seria mentira.
+     *
+     * O `await` é de propósito, apesar de a resposta não depender dele:
+     * numa server action o processo pode ser encerrado assim que ela
+     * retorna, e um envio solto morreria pela metade. `sendFriendRequest`
+     * engole os próprios erros, então esperar não arrisca o convite —
+     * que a esta altura já está gravado.
+     */
+    if (result === "sent" && recipient) {
+      await notifyFriendRequest(recipient, me);
+    }
+
     refresh();
     return {
       ok: true,
@@ -147,6 +176,37 @@ export async function sendFriendRequest(
     };
   } catch (e) {
     return fail(e);
+  }
+}
+
+/**
+ * Manda o e-mail de convite.
+ *
+ * Isolado numa função à parte, e com o `try` próprio, porque a regra
+ * aqui é dura: nada do que acontecer neste caminho pode transformar um
+ * convite bem-sucedido em erro na tela de quem convidou. A amizade já
+ * está no banco; o e-mail é um extra que pode falhar em silêncio.
+ */
+async function notifyFriendRequest(
+  to: { email: string; name: string },
+  from: { name: string; email: string; image: string | null },
+): Promise<void> {
+  try {
+    const payload = {
+      toName: to.name,
+      fromName: from.name,
+      fromEmail: from.email,
+      fromImage: from.image,
+    };
+
+    await sendMail({
+      to: to.email,
+      subject: friendInviteSubject(from.name),
+      html: friendInviteHtml(payload),
+      text: friendInviteText(payload),
+    });
+  } catch (e) {
+    console.error("[sona:email] convite de amizade não enviado", e);
   }
 }
 
