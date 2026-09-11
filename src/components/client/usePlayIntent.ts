@@ -39,6 +39,10 @@ export function usePlayIntent() {
       }
 
       if (following) {
+        // O aviso aparece antes da resposta do servidor: o clique
+        // precisa responder na hora, e a confirmação verdadeira chega
+        // logo atrás para corrigir o texto se algo falhar.
+        setNote("Entrando na fila…");
         void playNext(track).then((message) => {
           setNote(message);
           // A mensagem se apaga sozinha: ela confirma, não interrompe.

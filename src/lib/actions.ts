@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { hydrateAll, mutate, newId, readDb } from "./db";
 import { fileField, removeUpload, saveAudio, saveImage, UploadError } from "./storage";
-import { normalizeLyrics, parseLyrics } from "./utils";
+import { foldText, normalizeLyrics, parseLyrics } from "./utils";
 import { currentUser } from "./auth";
 import type { Database, HydratedTrack, LyricLine, Track } from "./types";
 
@@ -987,6 +987,54 @@ export async function fetchShuffleAll(
     const db = await readDb();
     const pool = db.tracks.filter((t) => t.audio);
     return hydrateAll(db, shuffleCopy(pool).slice(0, limit), user?.id);
+  } catch (e) {
+    console.error(e);
+    return [];
+  }
+}
+
+/**
+ * Busca faixas pelo título, artista, álbum ou gênero.
+ *
+ * Existe para o painel do jam poder oferecer a busca ali dentro: mandar
+ * a pessoa até a página de busca para acrescentar uma música significa
+ * sair da sala, achar a faixa, abrir o menu "⋯" e voltar — e era por
+ * isso que "como eu adiciono música no jam?" não tinha resposta óbvia.
+ */
+export async function searchTracks(
+  query: string,
+  limit = 20,
+): Promise<HydratedTrack[]> {
+  try {
+    const needle = foldText(query.trim());
+    if (needle.length < 2) return [];
+
+    const user = await currentUser();
+    const db = await readDb();
+
+    const artistName = (id: string) =>
+      db.artists.find((a) => a.id === id)?.name ?? "";
+    const albumTitle = (id: string | null) =>
+      id ? (db.albums.find((a) => a.id === id)?.title ?? "") : "";
+
+    // O título pesa mais que o resto: quem digita "amanhã" quer a música
+    // com esse nome antes do álbum que por acaso a contém.
+    const scored = db.tracks
+      .filter((t) => t.audio)
+      .map((t) => {
+        const title = foldText(t.title);
+        const haystack = foldText(
+          [t.title, artistName(t.artistId), albumTitle(t.albumId), t.genre].join(" "),
+        );
+        if (title.startsWith(needle)) return { t, score: 0 };
+        if (title.includes(needle)) return { t, score: 1 };
+        if (haystack.includes(needle)) return { t, score: 2 };
+        return null;
+      })
+      .filter((x): x is { t: Track; score: number } => x !== null)
+      .sort((a, b) => a.score - b.score || a.t.title.localeCompare(b.t.title));
+
+    return hydrateAll(db, scored.slice(0, limit).map((x) => x.t), user?.id);
   } catch (e) {
     console.error(e);
     return [];

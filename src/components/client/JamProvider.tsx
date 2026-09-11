@@ -62,9 +62,7 @@ type JamApi = {
   /** Sai do jam (encerra, se você for o host). */
   leave: () => Promise<void>;
   /** Força uma leitura agora, sem esperar o próximo polling. */
-  sync: () => void;
-  /** Uma ação de fila está em voo — para a UI não piscar duas vezes. */
-  busy: boolean;
+  sync: (force?: boolean) => void;
 };
 
 const OUTSIDE = "Você não está num jam.";
@@ -78,7 +76,6 @@ const Ctx = createContext<JamApi>({
   removeTrack: async () => OUTSIDE,
   leave: async () => {},
   sync: () => {},
-  busy: false,
 });
 
 export function useJam() {
@@ -113,8 +110,40 @@ export function JamProvider({
     setJam(initialJam);
   }
 
+  /**
+   * A fila que a pessoa acabou de pedir, antes de o servidor confirmar.
+   *
+   * Sem isto cada clique na fila custava uma ida e volta inteira antes
+   * de a tela mexer — e como o polling e a ação disputavam o mesmo
+   * `pollingRef`, às vezes custava duas. A previsão é local, some assim
+   * que a leitura verdadeira chega, e é a única coisa que a UI mostra
+   * nesse intervalo.
+   */
+  const [pending, setPending] = useState<HydratedTrack[] | null>(null);
+
   const jamId = jam?.id ?? null;
   const isHost = Boolean(jam?.isHost);
+
+  /**
+   * O que a UI enxerga: o snapshot do servidor, com a fila trocada pela
+   * previsão enquanto ela durar. O resto do snapshot (índice, relógio,
+   * participantes) continua sendo o do servidor — só a *ordem* das
+   * faixas é que se adianta.
+   */
+  const view =
+    jam && pending
+      ? {
+          ...jam,
+          queue: pending,
+          // O índice segue quem está tocando, não o número antigo: a
+          // previsão pode ter tirado faixas de antes dela.
+          index: (() => {
+            const playingId = jam.queue[Math.max(jam.index, 0)]?.id;
+            const at = pending.findIndex((t) => t.id === playingId);
+            return at >= 0 ? at : jam.index;
+          })(),
+        }
+      : jam;
 
   /** Última revisão de fila já aplicada no player do convidado. */
   const appliedRevision = useRef<string | null>(null);
@@ -140,26 +169,44 @@ export function JamProvider({
 
   /* ---------------- leitura do estado (todos) ---------------- */
 
-  const sync = useCallback(() => {
-    if (!jamId || pollingRef.current) return;
-    pollingRef.current = true;
-    void pollJam(jamId)
-      .then((next) => {
-        // `null` é o servidor dizendo que você não está mais na sala:
-        // o host encerrou, ou alguém entrou com esta conta noutro lugar.
-        if (!next || next.ended) {
-          setJam(null);
-          appliedRevision.current = null;
-          router.refresh();
-          return;
-        }
-        setJam(next);
-      })
-      .catch(() => {})
-      .finally(() => {
-        pollingRef.current = false;
-      });
-  }, [jamId, router]);
+  /**
+   * Lê o estado da sala.
+   *
+   * `force` existe porque o polling de fundo e uma ação do usuário
+   * querem coisas diferentes do mesmo `pollingRef`: a batida de três em
+   * três segundos pode ser pulada sem prejuízo quando já há uma leitura
+   * no ar, mas a leitura que confirma um clique, não — pulá-la deixava
+   * a pessoa esperando o ciclo seguinte, e era daí que vinha boa parte
+   * da lentidão que se sentia na fila.
+   */
+  const sync = useCallback(
+    (force = false) => {
+      if (!jamId) return;
+      if (pollingRef.current && !force) return;
+      pollingRef.current = true;
+      void pollJam(jamId)
+        .then((next) => {
+          // `null` é o servidor dizendo que você não está mais na sala:
+          // o host encerrou, ou alguém entrou com esta conta noutro lugar.
+          if (!next || next.ended) {
+            setJam(null);
+            setPending(null);
+            appliedRevision.current = null;
+            router.refresh();
+            return;
+          }
+          setJam(next);
+          // A previsão cumpriu o papel: o servidor já conta a mesma
+          // história, e mantê-la só arriscaria mascarar a próxima.
+          setPending(null);
+        })
+        .catch(() => {})
+        .finally(() => {
+          pollingRef.current = false;
+        });
+    },
+    [jamId, router],
+  );
 
   useEffect(() => {
     if (!jamId) return;
@@ -211,8 +258,14 @@ export function JamProvider({
    *   noutro aparelho. Aí a fila do jam é *adotada* inteira, na faixa em
    *   que a sala parou. Sem isto o anfitrião voltaria para um player
    *   mudo enquanto os convidados continuam esperando o relógio dele.
-   * - O player já está tocando e alguém enfileirou algo: as faixas novas
-   *   só se somam ao fim, sem interromper o que toca.
+   * - O player já está tocando e a fila da sala mudou: o host adota a
+   *   ordem nova mantendo a faixa atual no ar.
+   *
+   * Este segundo caso já foi só um `enqueue` do que faltava, e era daí
+   * que vinha a faixa que voltava depois de removida: acrescentar sabe
+   * somar mas não sabe subtrair, então o que o host tirava da sala
+   * continuava no player dele e era republicado logo atrás, desfazendo a
+   * remoção. Comparar as duas filas inteiras resolve os dois sentidos.
    */
   useEffect(() => {
     if (!jam || !isHost) return;
@@ -232,17 +285,19 @@ export function JamProvider({
       return;
     }
 
-    const known = new Set(p.queue.map((t) => t.id));
-    const fresh = jam.queue.filter((t) => !known.has(t.id));
-    if (fresh.length === 0) return;
+    const localIds = p.queue.map((t) => t.id);
+    const serverIds = jam.queue.map((t) => t.id);
+    const same =
+      localIds.length === serverIds.length &&
+      localIds.every((id, i) => id === serverIds[i]);
+    if (same) return;
 
-    // O `enqueue` carimba a fila local, mas o que ele acrescenta já veio
-    // do servidor: sem este perdão o host publicaria de volta o que um
-    // convidado acabou de enfileirar, num vaivém sem fim. A bandeira
-    // evita adivinhar o número do carimbo, que só existe no render
-    // seguinte.
-    adoptNextStamp.current = true;
-    p.enqueue(fresh);
+    // A faixa que toca manda: adotar a fila nova não pode cortar o áudio
+    // do host no meio. Quando ela sumiu da sala (removida por ele
+    // mesmo), o índice do servidor é o melhor palpite do que vem agora.
+    const playingId = p.current.id;
+    const at = jam.queue.findIndex((t) => t.id === playingId);
+    p.adoptQueue(jam.queue, at >= 0 ? at : Math.max(jam.index, 0));
   }, [jam, isHost]);
 
   /* ---------------- host: publica a fila ---------------- */
@@ -345,44 +400,53 @@ export function JamProvider({
 
   /* ---------------- ações ---------------- */
 
-  const [busy, setBusy] = useState(false);
-
   /**
-   * Toda ação de fila tem a mesma forma: manda, marca ocupado, e lê o
-   * estado de volta. O `sync` no fim é o que faz a mudança aparecer na
-   * mesma batida em quem clicou, em vez de no polling seguinte.
+   * Roda uma escrita na sala mostrando o resultado antes dele existir.
+   *
+   * A previsão entra primeiro, a chamada vai depois, e a leitura
+   * forçada no fim troca a previsão pela verdade. Se o servidor recusar,
+   * a previsão é desfeita na hora — a fila volta ao que era, e a
+   * mensagem explica por quê.
    */
   const act = useCallback(
-    async (run: () => Promise<{ message: string }>) => {
-      if (!jamId) return OUTSIDE;
-      setBusy(true);
+    async (
+      /** Como a fila fica, se der certo. `null` não prevê nada. */
+      predict: ((queue: HydratedTrack[]) => HydratedTrack[]) | null,
+      run: () => Promise<{ ok: boolean; message: string }>,
+    ) => {
+      if (!jamId || !jam) return OUTSIDE;
+
+      const before = pending ?? jam.queue;
+      if (predict) setPending(predict(before));
+
       try {
         const res = await run();
+        if (!res.ok) {
+          setPending(null);
+          return res.message;
+        }
         // A fila do servidor já é a certa: estas ações escrevem lá
-        // primeiro e só depois espelham no player. A bandeira faz o
-        // efeito de publicação engolir o carimbo que esse espelho
-        // produzir, em vez de mandar tudo de volta e desfazer — por
-        // exemplo — a remoção que acabou de acontecer.
-        //
-        // É uma bandeira, e não uma leitura de `queueStamp` aqui,
-        // porque o `playAt`/`removeFromQueue` acima ainda não passou
-        // pelo React: o número certo só existe no render seguinte.
+        // primeiro. A bandeira faz o efeito de publicação engolir o
+        // carimbo que o espelho local produzir, em vez de mandar tudo
+        // de volta e desfazer o que acabou de acontecer.
         adoptNextStamp.current = true;
-        sync();
+        sync(true);
         return res.message;
       } catch {
+        setPending(null);
         return "Algo deu errado. Tente novamente.";
-      } finally {
-        setBusy(false);
       }
     },
-    [jamId, sync],
+    [jamId, jam, pending, sync],
   );
 
   const addTrack = useCallback(
     async (track: HydratedTrack) => {
       if (!jamId) return OUTSIDE;
-      return act(() => addToJamQueue(jamId, [track.id]));
+      return act(
+        (q) => (q.some((t) => t.id === track.id) ? q : [...q, track]),
+        () => addToJamQueue(jamId, [track.id]),
+      );
     },
     [jamId, act],
   );
@@ -394,55 +458,75 @@ export function JamProvider({
    */
   const playNext = useCallback(
     async (track: HydratedTrack) => {
-      if (!jamId) return OUTSIDE;
-      return act(async () => {
-        // A faixa pode nem estar na fila ainda — quem pede "a seguir" a
-        // partir do catálogo espera que ela entre, não uma recusa.
-        const inQueue = jam?.queue.some((t) => t.id === track.id);
-        if (!inQueue) await addToJamQueue(jamId, [track.id]);
-        return moveJamTrackNext(jamId, track.id);
-      });
+      if (!jamId || !jam) return OUTSIDE;
+
+      const at = Math.max(jam.index, 0);
+      const playingId = jam.queue[at]?.id;
+
+      return act(
+        (q) => {
+          const rest = q.filter((t) => t.id !== track.id);
+          const anchor = playingId
+            ? rest.findIndex((t) => t.id === playingId)
+            : -1;
+          rest.splice(anchor + 1, 0, track);
+          return rest;
+        },
+        async () => {
+          // Uma chamada só quando a faixa já está na sala. Antes eram
+          // sempre duas em sequência — enfileirar e então mover — e a
+          // segunda esperava a primeira, dobrando a espera de um clique
+          // que vem quase sempre de uma faixa já enfileirada.
+          if (!jam.queue.some((t) => t.id === track.id)) {
+            const added = await addToJamQueue(jamId, [track.id]);
+            if (!added.ok) return added;
+          }
+          return moveJamTrackNext(jamId, track.id);
+        },
+      );
     },
     [jamId, jam, act],
   );
 
   const jumpTo = useCallback(
     async (track: HydratedTrack) => {
-      if (!jamId) return OUTSIDE;
+      if (!jamId || !jam) return OUTSIDE;
       if (!isHost) return "Só o anfitrião troca a faixa.";
-      return act(async () => {
-        const inQueue = jam?.queue.some((t) => t.id === track.id);
-        if (!inQueue) await addToJamQueue(jamId, [track.id]);
-        const res = await jumpJamToTrack(jamId, track.id);
-        // O host não espera o próprio polling para ouvir a troca: o
-        // player dele pula na hora, e o relógio reporta o resto.
-        if (res.ok) {
-          const p = playerRef.current;
-          const at = p.queue.findIndex((t) => t.id === track.id);
-          if (at >= 0) p.playAt(at);
-          else p.playTrack(track, [...p.queue, track]);
+
+      // Pular é o único gesto que o host ouve na hora: o player local
+      // vai junto, e o relógio conta o resto à sala.
+      const p = playerRef.current;
+      const local = p.queue.findIndex((t) => t.id === track.id);
+      if (local >= 0) p.playAt(local);
+
+      return act(null, async () => {
+        if (!jam.queue.some((t) => t.id === track.id)) {
+          const added = await addToJamQueue(jamId, [track.id]);
+          if (!added.ok) return added;
         }
-        return res;
+        return jumpJamToTrack(jamId, track.id);
       });
     },
-    [jamId, isHost, jam, act],
+    [jamId, jam, isHost, act],
   );
 
+  /**
+   * Tira uma faixa da fila do jam — e só dela.
+   *
+   * O player local do host fica de fora de propósito. Mexer nele aqui
+   * carimbava a fila e disparava a publicação inteira logo atrás da
+   * remoção, que então competia com ela: a faixa sumia e voltava. Quem
+   * traz a fila nova de volta ao player é o polling, pelo caminho
+   * normal, uma vez só.
+   */
   const removeTrack = useCallback(
     async (track: HydratedTrack) => {
       if (!jamId) return OUTSIDE;
       if (!isHost) return "Só o anfitrião remove faixas.";
-      return act(async () => {
-        const res = await removeFromJam(jamId, track.id);
-        if (res.ok) {
-          const p = playerRef.current;
-          const at = p.queue.findIndex((t) => t.id === track.id);
-          // Tirar do player local junto evita que a faixa toque no host
-          // um segundo antes do polling apagá-la da fila da sala.
-          if (at >= 0 && at !== p.index) p.removeFromQueue(at);
-        }
-        return res;
-      });
+      return act(
+        (q) => q.filter((t) => t.id !== track.id),
+        () => removeFromJam(jamId, track.id),
+      );
     },
     [jamId, isHost, act],
   );
@@ -458,7 +542,7 @@ export function JamProvider({
   return (
     <Ctx.Provider
       value={{
-        jam,
+        jam: view,
         isHost,
         addTrack,
         playNext,
@@ -466,7 +550,6 @@ export function JamProvider({
         removeTrack,
         leave,
         sync,
-        busy,
       }}
     >
       {children}

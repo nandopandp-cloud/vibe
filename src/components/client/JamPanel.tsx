@@ -1,12 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useState, useTransition } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { useRouter } from "next/navigation";
 import { useJam } from "./JamProvider";
 import { usePlayer } from "./PlayerProvider";
 import { UserAvatar } from "./UserMenu";
 import { Cover } from "../Cover";
 import { inviteFriendToJam, setJamQueue } from "@/lib/jam-actions";
+import { searchTracks } from "@/lib/actions";
 import { cx, formatTime } from "@/lib/utils";
 import * as I from "../Icons";
 import type { FriendEdge, HydratedTrack, JamParticipant } from "@/lib/types";
@@ -349,7 +356,7 @@ function QueueRow({
  * que aparece o tempo todo numa sala com gente — "que música era aquela
  * de antes?" — sem a qual só resta perguntar em voz alta.
  */
-function JamQueue({ busy }: { busy: boolean }) {
+function JamQueue({ onAdd }: { onAdd: () => void }) {
   const { jam, isHost, playNext, jumpTo, removeTrack } = useJam();
   const [note, setNote] = useState<string | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
@@ -406,7 +413,6 @@ function JamQueue({ busy }: { busy: boolean }) {
   if (!jam) return null;
 
   const at = Math.max(jam.index, 0);
-  const locked = busy || reordering;
 
   if (jam.queue.length === 0) {
     return (
@@ -414,9 +420,16 @@ function JamQueue({ busy }: { busy: boolean }) {
         <I.Queue className="mx-auto h-6 w-6 text-ink-3" />
         <p className="mt-2 text-sm text-ink-2">A fila está vazia.</p>
         <p className="mt-1 text-xs leading-relaxed text-ink-3">
-          Qualquer pessoa da sala pode adicionar música pelo menu “⋯” de
-          uma faixa.
+          Qualquer pessoa da sala pode acrescentar música.
         </p>
+        <button
+          type="button"
+          onClick={onAdd}
+          className="mt-4 inline-flex items-center gap-2 rounded-full bg-dusk px-4 py-2 text-xs font-semibold text-white transition-opacity hover:opacity-90"
+        >
+          <I.Plus className="h-4 w-4" />
+          Adicionar faixas
+        </button>
       </div>
     );
   }
@@ -456,7 +469,7 @@ function JamQueue({ busy }: { busy: boolean }) {
               position={i + 1}
               state={state}
               canReorder={isHost && jam.queue.length > 1}
-              busy={locked}
+              busy={reordering}
               onPlay={() => {
                 if (state === "playing") return;
                 void (isHost ? jumpTo(track) : playNext(track)).then(setNote);
@@ -505,6 +518,182 @@ function JamQueue({ busy }: { busy: boolean }) {
           );
         })}
       </ul>
+
+      {/* O convite para acrescentar fica no fim da fila, que é onde o
+          olho chega depois de ler o que já tem — e onde a música nova
+          vai parar. */}
+      <button
+        type="button"
+        onClick={onAdd}
+        className="mt-2 flex w-full items-center gap-3 rounded-lg border border-dashed border-hairline px-3 py-2.5 text-left text-sm text-ink-3 transition-colors hover:border-dusk/40 hover:text-dusk"
+      >
+        <I.Plus className="h-4 w-4 shrink-0" />
+        Adicionar faixas à fila
+      </button>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Adicionar faixas                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A busca dentro do painel.
+ *
+ * Antes, acrescentar uma música ao jam só era possível pelo menu "⋯" de
+ * uma faixa espalhada pelo app — quem abrisse o painel procurando por
+ * isso não encontrava nada, porque a ação não morava onde a fila mora.
+ * Aqui a pergunta e a resposta ficam no mesmo lugar.
+ */
+function AddTracks() {
+  const { jam, isHost, addTrack, playNext } = useJam();
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<HydratedTrack[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [done, setDone] = useState<Record<string, string>>({});
+  /** Descarta respostas de buscas já superadas pelo que se digitou. */
+  const latest = useRef(0);
+
+  const term = query.trim();
+  const active = term.length >= 2;
+
+  useEffect(() => {
+    if (!active) return;
+
+    // Espera a digitação parar: uma chamada por tecla encheria a rede e
+    // ainda chegaria fora de ordem.
+    const ticket = ++latest.current;
+    const timer = setTimeout(() => {
+      setSearching(true);
+      void searchTracks(term)
+        .then((found) => {
+          if (ticket !== latest.current) return;
+          setResults(found);
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (ticket === latest.current) setSearching(false);
+        });
+    }, 220);
+
+    return () => clearTimeout(timer);
+  }, [term, active]);
+
+  if (!jam) return null;
+
+  const inQueue = new Set(jam.queue.map((t) => t.id));
+  // Uma busca curta não guarda resultado nenhum: derivar aqui evita o
+  // efeito extra que só serviria para limpar a lista.
+  const shown = active ? results : [];
+
+  return (
+    <div>
+      <div className="relative">
+        <I.Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-3" />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Buscar faixa para o jam"
+          aria-label="Buscar faixa para adicionar ao jam"
+          autoFocus
+          className="h-11 w-full rounded-full bg-surface-2 pl-10 pr-9 text-sm text-ink placeholder:text-ink-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-dusk/40"
+        />
+        {query && (
+          <button
+            type="button"
+            onClick={() => setQuery("")}
+            aria-label="Limpar busca"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-ink-3 hover:text-ink"
+          >
+            <I.X className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
+      {!active ? (
+        <p className="mt-4 px-1 text-xs leading-relaxed text-ink-3">
+          Procure por título, artista, álbum ou gênero. Qualquer pessoa da
+          sala pode acrescentar música — o que entrar aqui toca para todo
+          mundo.
+        </p>
+      ) : searching && shown.length === 0 ? (
+        <p className="mt-4 px-1 text-xs text-ink-3">Procurando…</p>
+      ) : shown.length === 0 ? (
+        <p className="mt-4 px-1 text-xs text-ink-3">
+          Nada encontrado para “{term}”.
+        </p>
+      ) : (
+        <ul className="mt-3 space-y-0.5">
+          {shown.map((track) => {
+            const already = inQueue.has(track.id);
+            const note = done[track.id];
+
+            return (
+              <li
+                key={track.id}
+                className="group flex items-center gap-3 rounded-lg px-1 py-1.5 transition-colors hover:bg-surface-2"
+              >
+                <Cover
+                  src={track.cover}
+                  seed={track.id}
+                  name={track.title}
+                  className="h-10 w-10 shrink-0 rounded"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm text-ink">{track.title}</p>
+                  <p className="truncate text-xs text-ink-3">
+                    {note ??
+                      (already
+                        ? "Já está na fila"
+                        : (track.artist?.name ?? "Artista desconhecido"))}
+                  </p>
+                </div>
+
+                <div className="flex shrink-0 items-center gap-1">
+                  {/* "A seguir" ao lado de "adicionar": as duas coisas que
+                      se quer fazer com uma faixa achada numa sala. */}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void playNext(track).then((m) =>
+                        setDone((d) => ({ ...d, [track.id]: m })),
+                      )
+                    }
+                    aria-label={`Tocar ${track.title} a seguir`}
+                    title={isHost ? "Tocar a seguir" : "Pedir para tocar a seguir"}
+                    className="rounded-full p-1.5 text-ink-3 opacity-0 transition-opacity hover:text-dusk focus-visible:opacity-100 group-hover:opacity-100"
+                  >
+                    <I.Next className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={already}
+                    onClick={() =>
+                      void addTrack(track).then((m) =>
+                        setDone((d) => ({ ...d, [track.id]: m })),
+                      )
+                    }
+                    aria-label={`Adicionar ${track.title} à fila do jam`}
+                    className={cx(
+                      "rounded-full p-1.5 transition-colors",
+                      already
+                        ? "text-accent"
+                        : "text-ink-2 hover:bg-dusk/15 hover:text-dusk",
+                    )}
+                  >
+                    {already ? (
+                      <I.Check className="h-4 w-4" />
+                    ) : (
+                      <I.Plus className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }
@@ -513,7 +702,7 @@ function JamQueue({ busy }: { busy: boolean }) {
 /* Painel                                                              */
 /* ------------------------------------------------------------------ */
 
-type Tab = "fila" | "sala";
+type Tab = "fila" | "adicionar" | "sala";
 
 export function JamPanel({
   friends,
@@ -522,7 +711,7 @@ export function JamPanel({
   friends: FriendEdge[];
   onClose: () => void;
 }) {
-  const { jam, isHost, leave, busy } = useJam();
+  const { jam, isHost, leave } = useJam();
   const player = usePlayer();
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -588,6 +777,7 @@ export function JamPanel({
           <div className="mt-3 flex gap-1" role="tablist">
             {([
               ["fila", "Fila", ahead > 0 ? String(ahead) : null],
+              ["adicionar", "Adicionar", null],
               ["sala", "Sala", String(jam.participants.length)],
             ] as const).map(([id, label, badge]) => (
               <button
@@ -623,7 +813,9 @@ export function JamPanel({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
           {tab === "fila" ? (
-            <JamQueue busy={busy} />
+            <JamQueue onAdd={() => setTab("adicionar")} />
+          ) : tab === "adicionar" ? (
+            <AddTracks />
           ) : (
             <div className="space-y-6">
               <ShareLink code={jam.code} />
