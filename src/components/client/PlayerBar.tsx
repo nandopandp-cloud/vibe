@@ -71,9 +71,12 @@ function IconButton({
 export function PlayerBar({
   onOpenNowPlaying,
   onOpenLyrics,
+  onOpenJam,
 }: {
   onOpenNowPlaying: () => void;
   onOpenLyrics: () => void;
+  /** Abre o painel do jam — só aparece quando há uma sala. */
+  onOpenJam: () => void;
 }) {
   const p = usePlayer();
   const { jam, isHost } = useJam();
@@ -272,10 +275,13 @@ export function PlayerBar({
 
       {/* --- utilidades à direita --- */}
       <div className="hidden flex-1 items-center justify-end gap-2 md:flex">
+        {/* Durante um jam a fila que interessa é a da sala, e ela mora no
+            painel do jam. Mandar para a fila local aqui levaria o
+            convidado a uma lista que ele não pode mexer. */}
         <IconButton
-          className="h-8 w-8"
-          onClick={onOpenNowPlaying}
-          aria-label="Fila de reprodução"
+          className={cx("h-8 w-8", jam && "text-dusk hover:text-dusk")}
+          onClick={jam ? onOpenJam : onOpenNowPlaying}
+          aria-label={jam ? "Fila do jam" : "Fila de reprodução"}
         >
           <I.Queue className="h-[18px] w-[18px]" />
         </IconButton>

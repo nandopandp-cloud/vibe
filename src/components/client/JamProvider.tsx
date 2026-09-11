@@ -12,9 +12,13 @@ import { useRouter } from "next/navigation";
 import { usePlayer } from "./PlayerProvider";
 import {
   addToJamQueue,
+  jumpJamToTrack,
   leaveCurrentJam,
+  moveJamTrackNext,
   pollJam,
+  removeFromJam,
   reportJamPlayback,
+  setJamQueue,
 } from "@/lib/jam-actions";
 import type { HydratedTrack, JamSnapshot } from "@/lib/types";
 
@@ -49,18 +53,32 @@ type JamApi = {
   isHost: boolean;
   /** Enfileira no jam — qualquer participante pode. */
   addTrack: (track: HydratedTrack) => Promise<string>;
+  /** Puxa uma faixa da fila para logo depois da atual. */
+  playNext: (track: HydratedTrack) => Promise<string>;
+  /** Pula direto para uma faixa da fila — só o host. */
+  jumpTo: (track: HydratedTrack) => Promise<string>;
+  /** Tira uma faixa da fila — só o host. */
+  removeTrack: (track: HydratedTrack) => Promise<string>;
   /** Sai do jam (encerra, se você for o host). */
   leave: () => Promise<void>;
   /** Força uma leitura agora, sem esperar o próximo polling. */
   sync: () => void;
+  /** Uma ação de fila está em voo — para a UI não piscar duas vezes. */
+  busy: boolean;
 };
+
+const OUTSIDE = "Você não está num jam.";
 
 const Ctx = createContext<JamApi>({
   jam: null,
   isHost: false,
-  addTrack: async () => "Você não está num jam.",
+  addTrack: async () => OUTSIDE,
+  playNext: async () => OUTSIDE,
+  jumpTo: async () => OUTSIDE,
+  removeTrack: async () => OUTSIDE,
   leave: async () => {},
   sync: () => {},
+  busy: false,
 });
 
 export function useJam() {
@@ -102,6 +120,15 @@ export function JamProvider({
   const appliedRevision = useRef<string | null>(null);
   /** Evita dois pollings concorrentes quando a rede está lenta. */
   const pollingRef = useRef(false);
+  /** Último carimbo de fila local que o host já mandou ao servidor. */
+  const publishedStamp = useRef(player.queueStamp);
+  /** Uma publicação de fila em voo — o relógio espera ela acabar. */
+  const publishingRef = useRef(false);
+  /**
+   * A próxima mexida local na fila veio de uma ação que já escreveu no
+   * servidor: adotar o carimbo em vez de publicar de novo.
+   */
+  const adoptNextStamp = useRef(false);
 
   // O reporte lê o player a cada batida, mas não deve reagendar o
   // intervalo a cada tique de `time` — a ref segura o valor mais novo
@@ -155,11 +182,15 @@ export function JamProvider({
 
     const report = () => {
       const p = playerRef.current;
+      // Enquanto a fila nova ainda está sendo publicada, o relógio cala:
+      // o índice local se refere a uma fila que o servidor ainda não tem.
+      if (publishingRef.current) return;
       void reportJamPlayback({
         jamId,
         index: p.index,
         position: p.time,
         playing: p.playing,
+        trackId: p.current?.id,
       });
     };
 
@@ -186,20 +217,82 @@ export function JamProvider({
   useEffect(() => {
     if (!jam || !isHost) return;
     if (appliedRevision.current === jam.revision) return;
+    // Uma publicação em voo torna a revisão que acabou de chegar velha
+    // por definição: ela descreve a fila de antes do clique do host.
+    if (publishingRef.current) return;
     appliedRevision.current = jam.revision;
 
     const p = playerRef.current;
     if (jam.queue.length === 0) return;
 
     if (!p.current) {
+      // `adoptQueue` não carimba: a fila veio de fora, e republicá-la
+      // seria uma volta inútil.
       p.adoptQueue(jam.queue, Math.max(jam.index, 0));
       return;
     }
 
     const known = new Set(p.queue.map((t) => t.id));
     const fresh = jam.queue.filter((t) => !known.has(t.id));
-    if (fresh.length > 0) p.enqueue(fresh);
+    if (fresh.length === 0) return;
+
+    // O `enqueue` carimba a fila local, mas o que ele acrescenta já veio
+    // do servidor: sem este perdão o host publicaria de volta o que um
+    // convidado acabou de enfileirar, num vaivém sem fim. A bandeira
+    // evita adivinhar o número do carimbo, que só existe no render
+    // seguinte.
+    adoptNextStamp.current = true;
+    p.enqueue(fresh);
   }, [jam, isHost]);
+
+  /* ---------------- host: publica a fila ---------------- */
+
+  /**
+   * O outro sentido da mesma ponte.
+   *
+   * Sem isto, o host clicar noutra música durante o jam trocava só o
+   * player dele: a fila do servidor continuava a antiga, e o índice que
+   * o relógio reportava logo em seguida apontava para uma faixa
+   * qualquer dentro dela — a sala inteira pulava para algo que ninguém
+   * tinha escolhido, e o host não conseguia levar os outros com ele.
+   *
+   * O gatilho é o carimbo do player, e não o conteúdo da fila: só as
+   * mexidas que nasceram nesta tela sobem, e o que desceu do servidor
+   * não volta.
+   */
+  const localStamp = player.queueStamp;
+  useEffect(() => {
+    if (!jamId || !isHost) return;
+    if (publishedStamp.current === localStamp) return;
+    if (publishingRef.current) return;
+
+    if (adoptNextStamp.current) {
+      adoptNextStamp.current = false;
+      publishedStamp.current = localStamp;
+      return;
+    }
+
+    const p = playerRef.current;
+    if (p.queue.length === 0 || !p.current) return;
+
+    publishedStamp.current = localStamp;
+    publishingRef.current = true;
+
+    void setJamQueue({
+      jamId,
+      trackIds: p.queue.map((t) => t.id),
+      index: Math.max(p.index, 0),
+      position: p.time,
+      playing: p.playing,
+    })
+      .catch(() => {})
+      .finally(() => {
+        publishingRef.current = false;
+        // A revisão que voltar agora é a nossa própria: aceitá-la sem
+        // reinstalar nada mantém o host onde ele já está.
+        sync();
+      });
+  }, [jamId, isHost, localStamp, sync]);
 
   /* ---------------- convidado: obedece o relógio ---------------- */
 
@@ -252,15 +345,106 @@ export function JamProvider({
 
   /* ---------------- ações ---------------- */
 
-  const addTrack = useCallback(
-    async (track: HydratedTrack) => {
-      if (!jamId) return "Você não está num jam.";
-      const res = await addToJamQueue(jamId, [track.id]);
-      // O host aplica a própria adição na hora; os outros veem no polling.
-      sync();
-      return res.message;
+  const [busy, setBusy] = useState(false);
+
+  /**
+   * Toda ação de fila tem a mesma forma: manda, marca ocupado, e lê o
+   * estado de volta. O `sync` no fim é o que faz a mudança aparecer na
+   * mesma batida em quem clicou, em vez de no polling seguinte.
+   */
+  const act = useCallback(
+    async (run: () => Promise<{ message: string }>) => {
+      if (!jamId) return OUTSIDE;
+      setBusy(true);
+      try {
+        const res = await run();
+        // A fila do servidor já é a certa: estas ações escrevem lá
+        // primeiro e só depois espelham no player. A bandeira faz o
+        // efeito de publicação engolir o carimbo que esse espelho
+        // produzir, em vez de mandar tudo de volta e desfazer — por
+        // exemplo — a remoção que acabou de acontecer.
+        //
+        // É uma bandeira, e não uma leitura de `queueStamp` aqui,
+        // porque o `playAt`/`removeFromQueue` acima ainda não passou
+        // pelo React: o número certo só existe no render seguinte.
+        adoptNextStamp.current = true;
+        sync();
+        return res.message;
+      } catch {
+        return "Algo deu errado. Tente novamente.";
+      } finally {
+        setBusy(false);
+      }
     },
     [jamId, sync],
+  );
+
+  const addTrack = useCallback(
+    async (track: HydratedTrack) => {
+      if (!jamId) return OUTSIDE;
+      return act(() => addToJamQueue(jamId, [track.id]));
+    },
+    [jamId, act],
+  );
+
+  /**
+   * "Tocar a seguir" existe para o convidado ter alguma influência sobre
+   * a *ordem*, e não só sobre o fim da fila: enfileirar atrás de vinte
+   * músicas é o mesmo que não escolher nada.
+   */
+  const playNext = useCallback(
+    async (track: HydratedTrack) => {
+      if (!jamId) return OUTSIDE;
+      return act(async () => {
+        // A faixa pode nem estar na fila ainda — quem pede "a seguir" a
+        // partir do catálogo espera que ela entre, não uma recusa.
+        const inQueue = jam?.queue.some((t) => t.id === track.id);
+        if (!inQueue) await addToJamQueue(jamId, [track.id]);
+        return moveJamTrackNext(jamId, track.id);
+      });
+    },
+    [jamId, jam, act],
+  );
+
+  const jumpTo = useCallback(
+    async (track: HydratedTrack) => {
+      if (!jamId) return OUTSIDE;
+      if (!isHost) return "Só o anfitrião troca a faixa.";
+      return act(async () => {
+        const inQueue = jam?.queue.some((t) => t.id === track.id);
+        if (!inQueue) await addToJamQueue(jamId, [track.id]);
+        const res = await jumpJamToTrack(jamId, track.id);
+        // O host não espera o próprio polling para ouvir a troca: o
+        // player dele pula na hora, e o relógio reporta o resto.
+        if (res.ok) {
+          const p = playerRef.current;
+          const at = p.queue.findIndex((t) => t.id === track.id);
+          if (at >= 0) p.playAt(at);
+          else p.playTrack(track, [...p.queue, track]);
+        }
+        return res;
+      });
+    },
+    [jamId, isHost, jam, act],
+  );
+
+  const removeTrack = useCallback(
+    async (track: HydratedTrack) => {
+      if (!jamId) return OUTSIDE;
+      if (!isHost) return "Só o anfitrião remove faixas.";
+      return act(async () => {
+        const res = await removeFromJam(jamId, track.id);
+        if (res.ok) {
+          const p = playerRef.current;
+          const at = p.queue.findIndex((t) => t.id === track.id);
+          // Tirar do player local junto evita que a faixa toque no host
+          // um segundo antes do polling apagá-la da fila da sala.
+          if (at >= 0 && at !== p.index) p.removeFromQueue(at);
+        }
+        return res;
+      });
+    },
+    [jamId, isHost, act],
   );
 
   const leave = useCallback(async () => {
@@ -272,7 +456,19 @@ export function JamProvider({
   }, [jamId, router]);
 
   return (
-    <Ctx.Provider value={{ jam, isHost, addTrack, leave, sync }}>
+    <Ctx.Provider
+      value={{
+        jam,
+        isHost,
+        addTrack,
+        playNext,
+        jumpTo,
+        removeTrack,
+        leave,
+        sync,
+        busy,
+      }}
+    >
       {children}
     </Ctx.Provider>
   );

@@ -21,7 +21,7 @@ import type { HydratedTrack } from "@/lib/types";
 export function TrackMenu({ track }: { track: HydratedTrack }) {
   const p = usePlayer();
   const playlists = useMyPlaylists();
-  const { jam, addTrack } = useJam();
+  const { jam, isHost, addTrack, playNext } = useJam();
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -122,23 +122,47 @@ export function TrackMenu({ track }: { track: HydratedTrack }) {
                   ainda escolhe o que vem depois. */}
               {jam && (
                 <div className="border-b border-hairline p-1.5">
+                  <p className="px-3 pb-1 pt-1.5 text-[11px] font-medium uppercase tracking-wider text-ink-3">
+                    {jam.name}
+                  </p>
+                  {/* "A seguir" vem primeiro: numa sala, a diferença que
+                      importa é entre soar daqui a pouco e soar daqui a
+                      vinte músicas. */}
                   <button
                     type="button"
                     role="menuitem"
                     disabled={pending}
                     onClick={() =>
                       startTransition(async () => {
-                        const message = await addTrack(track);
-                        setJamNote(message);
+                        setJamNote(await playNext(track));
+                      })
+                    }
+                    className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-dusk transition-colors hover:bg-dusk/10 disabled:opacity-60"
+                  >
+                    <I.Next className="h-4 w-4 shrink-0" />
+                    <span className="truncate">
+                      {isHost ? "Tocar a seguir" : "Pedir para tocar a seguir"}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={pending}
+                    onClick={() =>
+                      startTransition(async () => {
+                        setJamNote(await addTrack(track));
                       })
                     }
                     className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-dusk transition-colors hover:bg-dusk/10 disabled:opacity-60"
                   >
                     <I.Jam className="h-4 w-4 shrink-0" />
-                    <span className="truncate">
-                      {jamNote ?? `Adicionar ao ${jam.name}`}
-                    </span>
+                    <span className="truncate">Adicionar ao fim da fila</span>
                   </button>
+                  {jamNote && (
+                    <p role="status" className="px-3 pb-1.5 pt-1 text-[11px] text-dusk">
+                      {jamNote}
+                    </p>
+                  )}
                 </div>
               )}
 

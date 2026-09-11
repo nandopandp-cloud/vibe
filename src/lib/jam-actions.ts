@@ -226,6 +226,8 @@ export async function reportJamPlayback(input: {
   index: number;
   position: number;
   playing: boolean;
+  /** Id da faixa que o host tem em `index` — o servidor confere. */
+  trackId?: string;
 }): Promise<void> {
   try {
     const me = await currentUser();
@@ -236,8 +238,27 @@ export async function reportJamPlayback(input: {
     // arrastaria a sala inteira para o tempo dele.
     if (!jam || jam.hostId !== me.id) return;
 
+    /**
+     * O índice sozinho é uma coordenada sem mapa: se a fila do servidor
+     * mudou entre o clique do host e este pacote, o mesmo número aponta
+     * para outra música e a sala pula para algo que ninguém escolheu.
+     * O id acompanha o índice justamente para o servidor poder recusar —
+     * ou reencontrar — a posição certa.
+     */
+    let index = input.index;
+    if (input.trackId) {
+      if (jam.queue[index] !== input.trackId) {
+        const found = jam.queue.indexOf(input.trackId);
+        // Faixa que nem está mais na fila do jam: o host acabou de trocar
+        // de álbum e `setJamQueue` ainda não chegou. Descartar é melhor
+        // que mover a sala com um índice que já não quer dizer nada.
+        if (found < 0) return;
+        index = found;
+      }
+    }
+
     await updateJamPlayback(jam.id, {
-      index: input.index,
+      index,
       position: Math.max(0, input.position),
       // O instante é medido aqui, no servidor: relógios de navegador
       // discordam entre si em segundos, e a conta do convidado é feita
@@ -250,11 +271,22 @@ export async function reportJamPlayback(input: {
   }
 }
 
-/** Troca a fila inteira — o host começou um álbum ou uma playlist. */
+/**
+ * Troca a fila inteira — o host começou um álbum, uma playlist, ou
+ * reordenou o que vem depois.
+ *
+ * É o que faltava para o host poder *escolher outra música* durante o
+ * jam: sem esta chamada, clicar numa faixa trocava só o player dele, e o
+ * índice reportado depois apontava para outra coisa dentro da fila
+ * antiga que o servidor ainda guardava — a sala inteira pulava para uma
+ * música que ninguém escolheu.
+ */
 export async function setJamQueue(input: {
   jamId: string;
   trackIds: string[];
   index: number;
+  position?: number;
+  playing?: boolean;
 }): Promise<ActionState> {
   try {
     const me = await currentUser();
@@ -277,8 +309,89 @@ export async function setJamQueue(input: {
       jam.id,
       queue,
       Math.min(Math.max(input.index, 0), queue.length - 1),
+      { position: input.position, playing: input.playing },
     );
     return { ok: true, message: "Fila atualizada." };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * Move uma faixa da fila para logo depois da que toca — "tocar a
+ * seguir". Qualquer participante pode: escolher a ordem é a parte da
+ * sala que se conversa, e não a que se comanda.
+ */
+export async function moveJamTrackNext(
+  jamId: string,
+  trackId: string,
+): Promise<ActionState> {
+  try {
+    const me = await currentUser();
+    if (!me) return DENY_ANON;
+
+    const jam = await findJam(jamId);
+    if (!jam) return { ok: false, message: "Este jam já terminou." };
+
+    const snapshot = await readJamSnapshot(jam.id, me.id);
+    if (!snapshot?.participants.some((p) => p.id === me.id)) {
+      return { ok: false, message: "Você não está neste jam." };
+    }
+
+    const from = jam.queue.indexOf(trackId);
+    if (from < 0) return { ok: false, message: "Faixa não está na fila." };
+
+    const at = Math.max(jam.index, 0);
+    const target = at + 1;
+    if (from === at) return { ok: true, message: "Essa já está tocando." };
+    if (from === target) return { ok: true, message: "Já é a próxima." };
+
+    // Tira e recoloca: a posição de destino é calculada na lista já sem a
+    // faixa, senão mover para trás erraria por um.
+    const rest = jam.queue.filter((id) => id !== trackId);
+    const currentId = jam.queue[at];
+    const insertAt = currentId ? rest.indexOf(currentId) + 1 : 0;
+    rest.splice(insertAt, 0, trackId);
+
+    await replaceJamQueue(jam.id, rest, rest.indexOf(currentId ?? trackId), {
+      // Reordenar não mexe em quem toca: a música atual segue de onde
+      // estava, com a deriva que o polling já sabe corrigir.
+      position: jam.position + (jam.playing ? (Date.now() - jam.positionAt) / 1000 : 0),
+      playing: jam.playing,
+    });
+
+    return { ok: true, message: "Toca a seguir." };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * Pula direto para uma faixa da fila. Só o host — é o relógio dele que a
+ * sala segue, e dois ponteiros discordando soaria como um corte.
+ */
+export async function jumpJamToTrack(
+  jamId: string,
+  trackId: string,
+): Promise<ActionState> {
+  try {
+    const me = await currentUser();
+    if (!me) return DENY_ANON;
+
+    const jam = await findJam(jamId);
+    if (!jam) return { ok: false, message: "Este jam já terminou." };
+    if (jam.hostId !== me.id) {
+      return { ok: false, message: "Só quem abriu o jam troca a faixa." };
+    }
+
+    const at = jam.queue.indexOf(trackId);
+    if (at < 0) return { ok: false, message: "Faixa não está na fila." };
+
+    await replaceJamQueue(jam.id, jam.queue, at, {
+      position: 0,
+      playing: true,
+    });
+    return { ok: true, message: "Tocando agora." };
   } catch (e) {
     return fail(e);
   }

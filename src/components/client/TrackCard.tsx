@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePlayer } from "./PlayerProvider";
+import { usePlayIntent } from "./usePlayIntent";
 import { AddToPlaylistButton } from "./AddToPlaylist";
 import { Avatar, Cover } from "../Cover";
 import {
@@ -54,14 +55,14 @@ export function TrackCard({
   context?: HydratedTrack[];
 }) {
   const p = usePlayer();
+  const { play, following, note } = usePlayIntent();
   const isCurrent = p.current?.id === track.id;
   const isPlaying = isCurrent && p.playing;
 
   const onPlay = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (isCurrent) p.toggle();
-    else p.playTrack(track, context);
+    play(track, context);
   };
 
   return (
@@ -83,7 +84,13 @@ export function TrackCard({
         <PlayFab
           playing={isPlaying}
           onClick={onPlay}
-          label={isPlaying ? `Pausar ${track.title}` : `Tocar ${track.title}`}
+          label={
+            following
+              ? `Pedir ${track.title} no jam`
+              : isPlaying
+                ? `Pausar ${track.title}`
+                : `Tocar ${track.title}`
+          }
           className={cx(
             "absolute bottom-2 right-2 translate-y-2 opacity-0 transition-all duration-200",
             "group-hover:translate-y-0 group-hover:opacity-100 focus-visible:translate-y-0 focus-visible:opacity-100",
@@ -109,7 +116,7 @@ export function TrackCard({
         </Link>
       )}
       <p className="mt-1 truncate text-xs text-ink-3">
-        {[track.album?.title ?? "Single", track.year].filter(Boolean).join(" • ")}
+        {note ?? [track.album?.title ?? "Single", track.year].filter(Boolean).join(" • ")}
       </p>
     </article>
   );
@@ -156,6 +163,7 @@ export function TrackRow({
   showAlbum?: boolean;
 }) {
   const p = usePlayer();
+  const { play, following, note } = usePlayIntent();
   const isCurrent = p.current?.id === track.id;
   const isPlaying = isCurrent && p.playing;
   const liked = p.isLiked(track.id);
@@ -185,12 +193,21 @@ export function TrackRow({
         </span>
         <button
           type="button"
-          onClick={() => (isCurrent ? p.toggle() : p.playTrack(track, context))}
-          aria-label={isPlaying ? `Pausar ${track.title}` : `Tocar ${track.title}`}
+          onClick={() => play(track, context)}
+          aria-label={
+            following
+              ? `Pedir ${track.title} no jam`
+              : isPlaying
+                ? `Pausar ${track.title}`
+                : `Tocar ${track.title}`
+          }
+          title={following ? "Tocar a seguir no jam" : undefined}
           className="absolute inset-0 grid place-items-center text-ink opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
         >
           {isPlaying ? (
             <I.Pause className="h-4 w-4" />
+          ) : following ? (
+            <I.Next className="h-4 w-4" />
           ) : (
             <I.Play className="h-4 w-4" />
           )}
@@ -216,13 +233,19 @@ export function TrackRow({
           >
             {track.title}
           </p>
-          {track.artist && (
-            <Link
-              href={`/artista/${track.artist.id}`}
-              className="truncate text-xs text-ink-2 hover:text-ink hover:underline"
-            >
-              {track.artist.name}
-            </Link>
+          {note ? (
+            // O aviso toma o lugar do artista por um instante: é a única
+            // linha livre da fileira, e some antes de fazer falta.
+            <p className="truncate text-xs text-dusk">{note}</p>
+          ) : (
+            track.artist && (
+              <Link
+                href={`/artista/${track.artist.id}`}
+                className="truncate text-xs text-ink-2 hover:text-ink hover:underline"
+              >
+                {track.artist.name}
+              </Link>
+            )
           )}
         </div>
       </div>
@@ -278,17 +301,18 @@ export function PlayAllButton({
   label?: string;
 }) {
   const p = usePlayer();
-  if (tracks.length === 0) return null;
-
+  const { play, following } = usePlayIntent();
   const playingThis =
     p.playing && tracks.some((t) => t.id === p.current?.id);
+
+  if (tracks.length === 0) return null;
 
   return (
     <button
       type="button"
       onClick={() => {
-        if (playingThis) p.toggle();
-        else p.playTrack(tracks[0], tracks);
+        if (playingThis && !following) p.toggle();
+        else play(tracks[0], tracks);
       }}
       className="inline-flex items-center gap-2 rounded-full bg-accent px-6 py-3 text-sm font-semibold text-accent-ink transition-all hover:scale-[1.03] hover:bg-accent-hover"
     >

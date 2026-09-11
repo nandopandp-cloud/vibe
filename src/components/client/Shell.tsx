@@ -104,6 +104,12 @@ export function Shell({
   const [nowPlaying, setNowPlaying] = useState(false);
   const [lyrics, setLyrics] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  /**
+   * O painel do jam vive aqui, e não só dentro da faixa de aviso: a
+   * barra do player precisa conseguir abri-lo de qualquer página, que é
+   * de onde a pessoa costuma querer mexer na fila.
+   */
+  const [jamPanel, setJamPanel] = useState(false);
 
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
@@ -263,7 +269,12 @@ export function Shell({
             jamInvites={jamInvites}
             friendRequests={friendRequests}
           />
-          <JamBanner friends={friends} />
+          <JamBanner
+            friends={friends}
+            open={jamPanel}
+            onOpen={() => setJamPanel(true)}
+            onClose={() => setJamPanel(false)}
+          />
           {children}
         </main>
       </div>
@@ -271,6 +282,7 @@ export function Shell({
       <PlayerBar
         onOpenNowPlaying={() => setNowPlaying(true)}
         onOpenLyrics={() => setLyrics(true)}
+        onOpenJam={() => setJamPanel(true)}
       />
       {nowPlaying && <NowPlaying onClose={() => setNowPlaying(false)} />}
       {lyrics && <LyricsScreen onClose={() => setLyrics(false)} />}

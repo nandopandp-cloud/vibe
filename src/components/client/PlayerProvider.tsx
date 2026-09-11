@@ -33,6 +33,14 @@ type PlayerState = {
   liked: Set<string>;
   /** Fila visível no painel lateral: o que vem depois da faixa atual. */
   upNext: HydratedTrack[];
+  /**
+   * Muda a cada vez que *esta pessoa* mexe na fila — tocar outra coisa,
+   * enfileirar, remover, reordenar. O jam observa isto para saber que a
+   * fila local passou à frente da do servidor e precisa ser publicada;
+   * o conteúdo da fila não serve para isso, porque ela também muda
+   * quando o próprio jam a instala de volta.
+   */
+  queueStamp: number;
   /** Buscando a continuação no servidor (fim da fila). */
   loadingMore: boolean;
 };
@@ -53,6 +61,10 @@ type PlayerApi = PlayerState & {
   cycleRepeat: () => void;
   playAt: (index: number) => void;
   removeFromQueue: (index: number) => void;
+  /** Move uma faixa da fila para outra posição — o arrasto do painel. */
+  moveInQueue: (from: number, to: number) => void;
+  /** Põe uma faixa logo depois da atual, sem interromper o que toca. */
+  playNext: (track: HydratedTrack) => void;
   /* --- escuta em conjunto (jam) --- */
   /** Acrescenta faixas ao fim da fila, sem trocar o que está tocando. */
   enqueue: (tracks: HydratedTrack[]) => void;
@@ -159,6 +171,13 @@ export function PlayerProvider({
   const [repeat, setRepeat] = useState<RepeatMode>("off");
   const [liked, setLiked] = useState<Set<string>>(new Set(initialLiked));
   const [loadingMore, setLoadingMore] = useState(false);
+  /**
+   * Contador de mexidas locais na fila. Só sobe quando a mudança partiu
+   * daqui — `adoptQueue`, que é o jam instalando a fila da sala, não
+   * conta, senão o host publicaria de volta o que acabou de receber e os
+   * dois lados ficariam se empurrando.
+   */
+  const [queueStamp, setQueueStamp] = useState(0);
   const [outputs, setOutputs] = useState<AudioOutput[]>([]);
   const [outputId, setOutputId] = useState("default");
   const [remoteState, setRemoteState] =
@@ -166,16 +185,37 @@ export function PlayerProvider({
 
   const current = index >= 0 ? (queue[index] ?? null) : null;
 
+  /**
+   * O índice mais novo, legível de dentro de um `setQueue`. As mexidas
+   * na fila precisam saber quem está tocando para reancorar o ponteiro,
+   * e o `index` capturado no closure pode já estar velho quando duas
+   * atualizações caem no mesmo lote.
+   */
+  const indexRef = useRef(index);
+  useEffect(() => {
+    indexRef.current = index;
+  }, [index]);
+
+  /** Marca que a fila mudou por vontade de quem está nesta tela. */
+  const stampQueue = useCallback(() => setQueueStamp((n) => n + 1), []);
+
   /** Substitui a fila registrando os ids no histórico do autoplay. */
   const installQueue = useCallback(
-    (tracks: HydratedTrack[], at: number, source?: HydratedTrack[]) => {
+    (
+      tracks: HydratedTrack[],
+      at: number,
+      source?: HydratedTrack[],
+      /** `false` quando quem instalou foi o jam, e não o usuário. */
+      local = true,
+    ) => {
       const list = dedupe(tracks);
       sourceRef.current = source ? dedupe(source) : list;
       historyRef.current = new Set(list.map((t) => t.id));
       setQueue(list);
       setIndex(Math.min(Math.max(at, 0), Math.max(list.length - 1, 0)));
+      if (local) stampQueue();
     },
-    [],
+    [stampQueue],
   );
 
   /* ---------------- elemento de áudio ---------------- */
@@ -276,6 +316,7 @@ export function PlayerProvider({
       for (const t of fresh) historyRef.current.add(t.id);
       sourceRef.current = [...sourceRef.current, ...fresh];
       setQueue((q) => [...q, ...fresh]);
+      stampQueue();
       return fresh;
     } catch {
       return [];
@@ -283,7 +324,7 @@ export function PlayerProvider({
       refillingRef.current = false;
       setLoadingMore(false);
     }
-  }, [queue, index, shuffle]);
+  }, [queue, index, shuffle, stampQueue]);
 
   /** Mantém sempre algumas faixas à frente, para o play nunca engasgar. */
   useEffect(() => {
@@ -466,16 +507,70 @@ export function PlayerProvider({
         ),
       );
     }
-  }, [shuffle, queue, index, shuffleAll]);
+    stampQueue();
+  }, [shuffle, queue, index, shuffleAll, stampQueue]);
 
   const cycleRepeat = useCallback(() => {
     setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"));
   }, []);
 
-  const removeFromQueue = useCallback((at: number) => {
-    setQueue((q) => q.filter((_, i) => i !== at));
-    setIndex((i) => (at < i ? i - 1 : i));
-  }, []);
+  const removeFromQueue = useCallback(
+    (at: number) => {
+      setQueue((q) => q.filter((_, i) => i !== at));
+      setIndex((i) => (at < i ? i - 1 : i));
+      stampQueue();
+    },
+    [stampQueue],
+  );
+
+  /**
+   * Move uma faixa dentro da fila. O índice da atual é recalculado pelo
+   * id, e não ajustado por aritmética: um arrasto pode passar por cima
+   * dela nos dois sentidos, e contar os saltos à mão erra por um.
+   */
+  const moveInQueue = useCallback(
+    (from: number, to: number) => {
+      setQueue((q) => {
+        if (from === to || from < 0 || from >= q.length) return q;
+        const dest = Math.min(Math.max(to, 0), q.length - 1);
+        const next = [...q];
+        const [moved] = next.splice(from, 1);
+        next.splice(dest, 0, moved);
+        const playingId = q[indexRef.current]?.id;
+        if (playingId) {
+          const at = next.findIndex((t) => t.id === playingId);
+          if (at >= 0) setIndex(at);
+        }
+        sourceRef.current = next;
+        return next;
+      });
+      stampQueue();
+    },
+    [stampQueue],
+  );
+
+  /** Insere logo depois da atual — "tocar a seguir". */
+  const playNext = useCallback(
+    (track: HydratedTrack) => {
+      setQueue((q) => {
+        const at = indexRef.current;
+        const without = q.filter((t) => t.id !== track.id);
+        // A remoção pode ter tirado algo antes da atual; o destino é
+        // medido na lista já limpa, pelo id de quem está tocando.
+        const playingId = q[at]?.id;
+        const anchor = playingId
+          ? without.findIndex((t) => t.id === playingId)
+          : -1;
+        without.splice(anchor + 1, 0, track);
+        historyRef.current.add(track.id);
+        sourceRef.current = without;
+        if (anchor >= 0) setIndex(anchor);
+        return without;
+      });
+      stampQueue();
+    },
+    [stampQueue],
+  );
 
   const like = useCallback((trackId: string) => {
     // Otimista: a UI responde na hora, o servidor confirma depois.
@@ -501,7 +596,8 @@ export function PlayerProvider({
       sourceRef.current = [...sourceRef.current, ...fresh];
       return [...q, ...fresh];
     });
-  }, []);
+    stampQueue();
+  }, [stampQueue]);
 
   /**
    * Assume a fila do jam por inteiro.
@@ -512,7 +608,7 @@ export function PlayerProvider({
    */
   const adoptQueue = useCallback(
     (tracks: HydratedTrack[], at: number) => {
-      installQueue(tracks, at);
+      installQueue(tracks, at, undefined, false);
     },
     [installQueue],
   );
@@ -686,6 +782,7 @@ export function PlayerProvider({
       liked,
       loadingMore,
       upNext: index >= 0 ? queue.slice(index + 1) : [],
+      queueStamp,
       playTrack,
       playShuffled,
       shuffleAll,
@@ -705,6 +802,8 @@ export function PlayerProvider({
         setPlaying(true);
       },
       removeFromQueue,
+      moveInQueue,
+      playNext,
       enqueue,
       adoptQueue,
       setPlaying,
@@ -721,9 +820,10 @@ export function PlayerProvider({
     }),
     [
       queue, index, current, playing, time, duration, volume, muted, shuffle,
-      repeat, liked, loadingMore, playTrack, playShuffled, shuffleAll, toggle,
+      repeat, liked, loadingMore, queueStamp,
+      playTrack, playShuffled, shuffleAll, toggle,
       next, prev, seek, toggleShuffle, cycleRepeat, removeFromQueue, like,
-      enqueue, adoptQueue, setFollower,
+      moveInQueue, playNext, enqueue, adoptQueue, setFollower,
       outputs, outputId, loadOutputs, selectOutput, canRouteAudio,
       remoteState, openRemotePicker,
     ],

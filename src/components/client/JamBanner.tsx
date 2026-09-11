@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { useJam } from "./JamProvider";
 import { JamPanel } from "./JamPanel";
 import { UserAvatar } from "./UserMenu";
@@ -17,21 +16,32 @@ import type { FriendEdge } from "@/lib/types";
  * sob o comando de outra pessoa, e ficaria sem explicação para os botões
  * que não respondem.
  */
-export function JamBanner({ friends }: { friends: FriendEdge[] }) {
+export function JamBanner({
+  friends,
+  open,
+  onOpen,
+  onClose,
+}: {
+  friends: FriendEdge[];
+  /** O painel é controlado pelo Shell: a barra do player também o abre. */
+  open: boolean;
+  onOpen: () => void;
+  onClose: () => void;
+}) {
   const { jam, isHost } = useJam();
-  const [panel, setPanel] = useState(false);
 
   if (!jam) return null;
 
   const online = jam.participants.filter((p) => p.online);
   const host = jam.participants.find((p) => p.isHost);
+  const ahead = Math.max(jam.queue.length - Math.max(jam.index, 0) - 1, 0);
 
   return (
     <>
       <div className="px-6 pb-1 pt-1 md:px-8">
         <button
           type="button"
-          onClick={() => setPanel(true)}
+          onClick={onOpen}
           className="flex w-full items-center gap-3 rounded-xl border border-dusk/25 bg-dusk/10 px-4 py-2.5 text-left transition-colors hover:bg-dusk/15"
         >
           <I.Jam className="h-[18px] w-[18px] shrink-0 text-dusk" />
@@ -67,13 +77,20 @@ export function JamBanner({ friends }: { friends: FriendEdge[] }) {
             )}
           </span>
 
+          {/* O número da fila fica na faixa porque é a pergunta que se
+              faz sem abrir nada: ainda tem música guardada? */}
+          <span className="hidden shrink-0 items-center gap-1.5 text-xs font-medium text-dusk sm:flex">
+            <I.Queue className="h-4 w-4" />
+            {ahead > 0 ? `${ahead} na fila` : "Fila vazia"}
+          </span>
+
           <span className="shrink-0 text-xs font-medium text-dusk">
             Abrir
           </span>
         </button>
       </div>
 
-      {panel && <JamPanel friends={friends} onClose={() => setPanel(false)} />}
+      {open && <JamPanel friends={friends} onClose={onClose} />}
     </>
   );
 }

@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePlayer } from "./PlayerProvider";
+import { useJam } from "./JamProvider";
+import { usePlayIntent } from "./usePlayIntent";
 import { Avatar, Cover } from "../Cover";
 import { activeLyricIndex, cx, formatPlays, formatTime } from "@/lib/utils";
 import * as I from "../Icons";
@@ -83,6 +85,16 @@ function Lyrics({ expanded, onToggle }: { expanded: boolean; onToggle: () => voi
 /** Painel "Tocando agora" + "Próximas da fila". */
 function QueuePanel() {
   const p = usePlayer();
+  const { jam, isHost } = useJam();
+  const { play } = usePlayIntent();
+  const [dragging, setDragging] = useState<number | null>(null);
+  const [over, setOver] = useState<number | null>(null);
+
+  const following = Boolean(jam) && !isHost;
+  // Reordenar arrastando é do host e de quem ouve sozinho: no convidado
+  // a fila é a da sala, e um arrasto ali seria desfeito pelo polling.
+  const canReorder = !following;
+
   return (
     <aside className="flex w-full flex-col gap-5 rounded-xl bg-surface/70 p-4 backdrop-blur lg:w-[320px]">
       <div>
@@ -111,46 +123,110 @@ function QueuePanel() {
       </div>
 
       <div className="min-h-0 flex-1">
-        <h2 className="mb-2 text-sm font-semibold text-ink">Próximas da fila</h2>
+        <div className="mb-2 flex items-baseline justify-between gap-2">
+          <h2 className="text-sm font-semibold text-ink">Próximas da fila</h2>
+          {p.upNext.length > 0 && (
+            <span className="text-[11px] tabular-nums text-ink-3">
+              {p.upNext.length}
+            </span>
+          )}
+        </div>
+
+        {following && (
+          <p className="mb-2 rounded-lg bg-dusk/10 px-3 py-2 text-[11px] leading-relaxed text-dusk">
+            Esta é a fila do jam. Clique numa faixa para pedir que ela
+            toque a seguir.
+          </p>
+        )}
+
         {p.upNext.length === 0 ? (
           <p className="text-xs text-ink-3">
             {p.loadingMore
               ? "Procurando o que tocar em seguida…"
-              : p.current
-                ? "Quando esta acabar, o Sona continua com algo parecido."
-                : "Escolha um álbum ou playlist para começar."}
+              : following
+                ? "O anfitrião ainda não enfileirou mais nada."
+                : p.current
+                  ? "Quando esta acabar, o Sona continua com algo parecido."
+                  : "Escolha um álbum ou playlist para começar."}
           </p>
         ) : (
           <ul className="space-y-1 overflow-y-auto">
-            {p.upNext.map((t, i) => (
-              <li key={`${t.id}-${i}`}>
-                <div className="group flex items-center gap-3 rounded-lg p-2 transition-colors hover:bg-surface-2">
-                  <button
-                    type="button"
-                    onClick={() => p.playAt(p.index + 1 + i)}
-                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                  >
-                    <Cover src={t.cover} seed={t.id} name={t.title} className="h-10 w-10" />
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm text-ink">
-                        {t.title}
+            {p.upNext.map((t, i) => {
+              // A posição real na fila; `i` conta só a partir da atual.
+              const at = p.index + 1 + i;
+              return (
+                <li
+                  key={`${t.id}-${i}`}
+                  draggable={canReorder}
+                  onDragStart={(e) => {
+                    setDragging(at);
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setData("text/plain", t.id);
+                  }}
+                  onDragOver={(e) => {
+                    if (!canReorder || dragging === null || dragging === at)
+                      return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                    setOver(at);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (dragging !== null && dragging !== at) {
+                      p.moveInQueue(dragging, at);
+                    }
+                    setDragging(null);
+                    setOver(null);
+                  }}
+                  onDragEnd={() => {
+                    setDragging(null);
+                    setOver(null);
+                  }}
+                  className={cx(
+                    "rounded-lg",
+                    dragging === at && "opacity-40",
+                    over === at && "ring-1 ring-inset ring-dusk",
+                  )}
+                >
+                  <div className="group flex items-center gap-3 rounded-lg p-2 transition-colors hover:bg-surface-2">
+                    {canReorder && (
+                      <span
+                        className="-ml-1 shrink-0 cursor-grab text-ink-3 opacity-0 transition-opacity group-hover:opacity-100 active:cursor-grabbing"
+                        aria-hidden
+                      >
+                        <I.Grip className="h-4 w-4" />
                       </span>
-                      <span className="block truncate text-xs text-ink-2">
-                        {t.artist?.name}
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => (following ? play(t) : p.playAt(at))}
+                      title={following ? "Tocar a seguir no jam" : undefined}
+                      className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                    >
+                      <Cover src={t.cover} seed={t.id} name={t.title} className="h-10 w-10" />
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm text-ink">
+                          {t.title}
+                        </span>
+                        <span className="block truncate text-xs text-ink-2">
+                          {t.artist?.name}
+                        </span>
                       </span>
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => p.removeFromQueue(p.index + 1 + i)}
-                    className="text-ink-3 opacity-0 transition-opacity hover:text-ink group-hover:opacity-100"
-                    aria-label={`Remover ${t.title} da fila`}
-                  >
-                    <I.X className="h-4 w-4" />
-                  </button>
-                </div>
-              </li>
-            ))}
+                    </button>
+                    {!following && (
+                      <button
+                        type="button"
+                        onClick={() => p.removeFromQueue(at)}
+                        className="shrink-0 text-ink-3 opacity-0 transition-opacity hover:text-ink group-hover:opacity-100"
+                        aria-label={`Remover ${t.title} da fila`}
+                      >
+                        <I.X className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
@@ -161,8 +237,17 @@ function QueuePanel() {
 /** Tela cheia de reprodução, sobreposta ao app. */
 export function NowPlaying({ onClose }: { onClose: () => void }) {
   const p = usePlayer();
+  const { jam, isHost } = useJam();
   const t = p.current;
   const [expandedLyrics, setExpandedLyrics] = useState(false);
+
+  /**
+   * Os controles grandes desta tela obedecem à mesma regra da barra de
+   * baixo: num jam, quem comanda é o host. Sem isto, a tela cheia
+   * oferecia um play e um "próxima" que o polling desfazia meio segundo
+   * depois — o mesmo botão dizia sim aqui e não lá embaixo.
+   */
+  const following = Boolean(jam) && !isHost;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -287,11 +372,14 @@ export function NowPlaying({ onClose }: { onClose: () => void }) {
                   step={0.1}
                   value={p.time}
                   aria-label="Progresso da faixa"
-                  onChange={(e) => p.seek(Number(e.target.value))}
+                  disabled={following}
+                  onChange={(e) =>
+                    !following && p.seek(Number(e.target.value))
+                  }
                   style={
                     {
                       "--track-pct": `${p.duration ? (p.time / p.duration) * 100 : 0}%`,
-                      "--track-fill": "#fff",
+                      "--track-fill": following ? "#7b5cf0" : "#fff",
                     } as React.CSSProperties
                   }
                 />
@@ -303,7 +391,11 @@ export function NowPlaying({ onClose }: { onClose: () => void }) {
                 <button
                   type="button"
                   onClick={p.toggleShuffle}
-                  className={cx(p.shuffle ? "text-accent" : "text-ink-2 hover:text-ink")}
+                  disabled={following}
+                  className={cx(
+                    p.shuffle ? "text-accent" : "text-ink-2 hover:text-ink",
+                    following && "opacity-40",
+                  )}
                   aria-label="Aleatório"
                   aria-pressed={p.shuffle}
                 >
@@ -312,7 +404,11 @@ export function NowPlaying({ onClose }: { onClose: () => void }) {
                 <button
                   type="button"
                   onClick={p.prev}
-                  className="text-ink hover:scale-105"
+                  disabled={following}
+                  className={cx(
+                    "text-ink hover:scale-105",
+                    following && "opacity-40 hover:scale-100",
+                  )}
                   aria-label="Anterior"
                 >
                   <I.Prev className="h-7 w-7" />
@@ -320,8 +416,25 @@ export function NowPlaying({ onClose }: { onClose: () => void }) {
                 <button
                   type="button"
                   onClick={p.toggle}
-                  className="grid h-16 w-16 place-items-center rounded-full border border-ink/70 text-ink transition-transform hover:scale-105"
-                  aria-label={p.playing ? "Pausar" : "Tocar"}
+                  disabled={following}
+                  className={cx(
+                    "grid h-16 w-16 place-items-center rounded-full border transition-transform",
+                    following
+                      ? "border-hairline text-ink-3"
+                      : "border-ink/70 text-ink hover:scale-105",
+                  )}
+                  aria-label={
+                    following
+                      ? "O anfitrião do jam controla a reprodução"
+                      : p.playing
+                        ? "Pausar"
+                        : "Tocar"
+                  }
+                  title={
+                    following
+                      ? "O anfitrião do jam controla a reprodução"
+                      : undefined
+                  }
                 >
                   {p.playing ? (
                     <I.Pause className="h-6 w-6" />
@@ -332,7 +445,11 @@ export function NowPlaying({ onClose }: { onClose: () => void }) {
                 <button
                   type="button"
                   onClick={p.next}
-                  className="text-ink hover:scale-105"
+                  disabled={following}
+                  className={cx(
+                    "text-ink hover:scale-105",
+                    following && "opacity-40 hover:scale-100",
+                  )}
                   aria-label="Próxima"
                 >
                   <I.Next className="h-7 w-7" />
@@ -340,12 +457,22 @@ export function NowPlaying({ onClose }: { onClose: () => void }) {
                 <button
                   type="button"
                   onClick={p.cycleRepeat}
-                  className={cx(p.repeat !== "off" ? "text-accent" : "text-ink-2 hover:text-ink")}
+                  disabled={following}
+                  className={cx(
+                    p.repeat !== "off" ? "text-accent" : "text-ink-2 hover:text-ink",
+                    following && "opacity-40",
+                  )}
                   aria-label="Repetir"
                 >
                   <I.Repeat className="h-5 w-5" />
                 </button>
               </div>
+
+              {following && (
+                <p className="text-center text-xs text-dusk">
+                  {jam?.name} — o anfitrião comanda a reprodução.
+                </p>
+              )}
             </div>
 
             <div className="grid gap-4 lg:grid-cols-[1fr_360px]">

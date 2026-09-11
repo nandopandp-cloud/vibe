@@ -982,20 +982,29 @@ export async function appendToJamQueue(
   return Number((rows as { size: number }[])[0]?.size ?? 0);
 }
 
-/** Substitui a fila inteira — o host trocou de álbum ou de playlist. */
+/**
+ * Substitui a fila inteira — o host trocou de álbum, de playlist, ou
+ * arrastou uma faixa para outro lugar.
+ *
+ * `position` é um parâmetro em vez de zero fixo porque nem toda troca de
+ * fila é uma troca de faixa: reordenar o que vem depois, ou tirar uma
+ * música do meio, deixa a atual tocando onde estava. Zerar ali faria a
+ * sala inteira voltar ao começo por causa de um arrasto.
+ */
 export async function replaceJamQueue(
   jamId: string,
   trackIds: string[],
   index: number,
+  state?: { position?: number; playing?: boolean },
 ): Promise<void> {
   await ensureSchema();
   await sql`
     UPDATE jams
     SET queue = ${JSON.stringify(trackIds)}::jsonb,
         track_index = ${index},
-        position = 0,
+        position = ${Math.max(0, state?.position ?? 0)},
         position_at = ${Date.now()},
-        playing = true,
+        playing = ${state?.playing ?? true},
         revision = revision + 1
     WHERE id = ${jamId} AND ended_at IS NULL`;
 }
