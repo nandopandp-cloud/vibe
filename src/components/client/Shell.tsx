@@ -19,6 +19,7 @@ import type {
 import { UserMenu } from "./UserMenu";
 import { JamButton } from "./JamButton";
 import { JamBanner } from "./JamBanner";
+import { JamPanel } from "./JamPanel";
 import { Notifications } from "./Notifications";
 import { useFriendsActivity } from "./PresenceProvider";
 
@@ -294,17 +295,12 @@ export function Shell({
         <main className="relative min-w-0 flex-1 overflow-y-auto bg-canvas">
           <TopBar
             onMenu={() => setMenuOpen(true)}
+            onOpenJam={() => setJamPanel(true)}
             user={user}
-            friends={friends}
             jamInvites={jamInvites}
             friendRequests={friendRequests}
           />
-          <JamBanner
-            friends={friends}
-            open={jamPanel}
-            onOpen={() => setJamPanel(true)}
-            onClose={() => setJamPanel(false)}
-          />
+          <JamBanner onOpen={() => setJamPanel(true)} />
           {children}
         </main>
       </div>
@@ -316,20 +312,31 @@ export function Shell({
       />
       {nowPlaying && <NowPlaying onClose={() => setNowPlaying(false)} />}
       {lyrics && <LyricsScreen onClose={() => setLyrics(false)} />}
+      {/* O painel do jam é um só, e é daqui que ele sai.
+          Já esteve em dois lugares ao mesmo tempo — a faixa de aviso
+          tinha o seu e o botão da barra de cima tinha outro, cada um com
+          o seu próprio estado de aberto. Clicar em "Jam" dentro de uma
+          sala abria os dois: dois `fixed inset-0` com `bg-black/60`
+          empilhados escureciam a tela quase por inteiro e sobrepunham as
+          duas gavetas, que era o jam "transparente". */}
+      {jamPanel && (
+        <JamPanel friends={friends} onClose={() => setJamPanel(false)} />
+      )}
     </div>
   );
 }
 
 function TopBar({
   onMenu,
+  onOpenJam,
   user,
-  friends,
   jamInvites,
   friendRequests,
 }: {
   onMenu: () => void;
+  /** O painel do jam é um só e mora no `Shell`; aqui só se pede que abra. */
+  onOpenJam: () => void;
   user: PublicUser;
-  friends: FriendEdge[];
   jamInvites: HydratedJamInvite[];
   friendRequests: FriendEdge[];
 }) {
@@ -363,7 +370,7 @@ function TopBar({
       </form>
 
       <div className="ml-auto flex items-center gap-3">
-        <JamButton friends={friends} invites={jamInvites} />
+        <JamButton invites={jamInvites} onOpenPanel={onOpenJam} />
         <Notifications requests={friendRequests} />
         <UserMenu user={user} />
       </div>

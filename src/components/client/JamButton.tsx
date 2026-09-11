@@ -3,16 +3,11 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useJam } from "./JamProvider";
 import { usePlayer } from "./PlayerProvider";
-import { JamPanel } from "./JamPanel";
 import { UserAvatar } from "./UserMenu";
 import { createJam, declineJamInvite, joinJamByCode } from "@/lib/jam-actions";
 import { cx } from "@/lib/utils";
 import * as I from "../Icons";
-import type {
-  FriendEdge,
-  HydratedJamInvite,
-  JamSnapshot,
-} from "@/lib/types";
+import type { HydratedJamInvite, JamSnapshot } from "@/lib/types";
 
 /** Duas listas de convite dizem a mesma coisa? */
 function sameInvites(a: HydratedJamInvite[], b: HydratedJamInvite[]): boolean {
@@ -103,10 +98,18 @@ function InviteList({
 /* ------------------------------------------------------------------ */
 
 export function JamButton({
-  friends,
   invites: fromServer,
+  onOpenPanel,
 }: {
-  friends: FriendEdge[];
+  /**
+   * Abre o painel do jam — que é um só, e mora no `Shell`.
+   *
+   * Este botão já teve o seu próprio, e o resultado era duas cópias do
+   * mesmo painel abertas ao mesmo tempo: dois `fixed inset-0` com
+   * `bg-black/60` cada, que somados escureciam a tela quase por completo
+   * e deixavam as duas gavetas sobrepostas — era o "jam transparente".
+   */
+  onOpenPanel: () => void;
   invites: HydratedJamInvite[];
 }) {
   const { jam, adopt } = useJam();
@@ -132,7 +135,6 @@ export function JamButton({
     if (!sameInvites(fromServer, invites)) setInvites(fromServer);
   }
 
-  const [panel, setPanel] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const ref = useRef<HTMLDivElement>(null);
@@ -179,7 +181,7 @@ export function JamButton({
       setOpen(false);
       adopt(res.jam);
       setInvites(res.invites);
-      setPanel(true);
+      onOpenPanel();
     });
 
   return (
@@ -187,7 +189,7 @@ export function JamButton({
       <div ref={ref} className="relative">
         <button
           type="button"
-          onClick={() => (jam ? setPanel(true) : setOpen((v) => !v))}
+          onClick={() => (jam ? onOpenPanel() : setOpen((v) => !v))}
           aria-haspopup={jam ? undefined : "menu"}
           aria-expanded={jam ? undefined : open}
           aria-label={jam ? "Abrir o jam" : "Escutar com amigos"}
@@ -263,7 +265,7 @@ export function JamButton({
                   onDeclined={setInvites}
                   onDone={() => {
                     setOpen(false);
-                    setPanel(true);
+                    onOpenPanel();
                   }}
                 />
               </div>
@@ -271,8 +273,6 @@ export function JamButton({
           </div>
         )}
       </div>
-
-      {panel && <JamPanel friends={friends} onClose={() => setPanel(false)} />}
     </>
   );
 }
