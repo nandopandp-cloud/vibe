@@ -19,6 +19,7 @@ import type {
 import { UserMenu } from "./UserMenu";
 import { JamButton } from "./JamButton";
 import { JamBanner } from "./JamBanner";
+import { Notifications } from "./Notifications";
 
 const NAV = [
   { href: "/", label: "Início", icon: I.Home, activeIcon: I.HomeFilled },
@@ -89,6 +90,7 @@ export function Shell({
   user,
   friends,
   jamInvites,
+  friendRequests,
 }: {
   children: React.ReactNode;
   playlists: SidebarPlaylist[];
@@ -96,6 +98,7 @@ export function Shell({
   user: PublicUser;
   friends: FriendEdge[];
   jamInvites: HydratedJamInvite[];
+  friendRequests: FriendEdge[];
 }) {
   const pathname = usePathname();
   const [nowPlaying, setNowPlaying] = useState(false);
@@ -258,6 +261,7 @@ export function Shell({
             user={user}
             friends={friends}
             jamInvites={jamInvites}
+            friendRequests={friendRequests}
           />
           <JamBanner friends={friends} />
           {children}
@@ -279,11 +283,13 @@ function TopBar({
   user,
   friends,
   jamInvites,
+  friendRequests,
 }: {
   onMenu: () => void;
   user: PublicUser;
   friends: FriendEdge[];
   jamInvites: HydratedJamInvite[];
+  friendRequests: FriendEdge[];
 }) {
   const [q, setQ] = useState("");
 
@@ -316,6 +322,7 @@ function TopBar({
 
       <div className="ml-auto flex items-center gap-3">
         <JamButton friends={friends} invites={jamInvites} />
+        <Notifications requests={friendRequests} />
         <UserMenu user={user} />
       </div>
     </header>

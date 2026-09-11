@@ -435,6 +435,7 @@ export async function mutate<T>(
     users: db.users,
     liked: db.liked,
     following: db.following,
+    friendships: db.friendships,
   });
 
   const result = await fn(db);
@@ -455,6 +456,7 @@ export async function mutate<T>(
   await syncUsers(snapshot.users, db.users);
   await syncLikes(snapshot.liked, db.liked);
   await syncFollows(snapshot.following, db.following);
+  await syncFriendships(snapshot.friendships, db.friendships);
 
   return result;
 }
@@ -547,6 +549,47 @@ async function syncFollows(
           DELETE FROM follows
           WHERE user_id = ${userId} AND artist_id = ${artistId}`;
       }
+    }
+  }
+}
+
+/**
+ * Grava as amizades criadas, aceitas e desfeitas.
+ *
+ * A chave é o par ordenado, e não um id próprio: é assim que o resto do
+ * código encontra a relação, em qualquer dos dois sentidos. Só o `status`
+ * muda depois de criada (pendente vira aceita), então é o único campo
+ * que o UPDATE precisa tocar.
+ */
+async function syncFriendships(before: Friendship[], after: Friendship[]) {
+  const key = (f: Friendship) => `${f.requesterId}:${f.addresseeId}`;
+  const prev = new Map(before.map((f) => [key(f), f]));
+  const next = new Map(after.map((f) => [key(f), f]));
+
+  for (const [id, link] of next) {
+    const old = prev.get(id);
+    if (!old) {
+      await sql`
+        INSERT INTO friendships (requester_id, addressee_id, status,
+                                 created_at, accepted_at)
+        VALUES (${link.requesterId}, ${link.addresseeId}, ${link.status},
+                ${link.createdAt}, ${link.acceptedAt})
+        ON CONFLICT (requester_id, addressee_id) DO NOTHING`;
+    } else if (old.status !== link.status) {
+      await sql`
+        UPDATE friendships
+        SET status = ${link.status}, accepted_at = ${link.acceptedAt}
+        WHERE requester_id = ${link.requesterId}
+          AND addressee_id = ${link.addresseeId}`;
+    }
+  }
+
+  for (const [id, link] of prev) {
+    if (!next.has(id)) {
+      await sql`
+        DELETE FROM friendships
+        WHERE requester_id = ${link.requesterId}
+          AND addressee_id = ${link.addresseeId}`;
     }
   }
 }

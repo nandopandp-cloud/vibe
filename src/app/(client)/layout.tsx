@@ -20,7 +20,7 @@ export default async function ClientLayout({
 
   // As três leituras são independentes entre si e todas já passam pelo
   // `readDb` memoizado — em paralelo elas custam o mesmo que a mais lenta.
-  const [{ friends }, jamInvites, jam] = await Promise.all([
+  const [{ friends, incoming }, jamInvites, jam] = await Promise.all([
     readFriends(),
     readMyJamInvites(),
     readMyJam(),
@@ -63,6 +63,7 @@ export default async function ClientLayout({
             user={user}
             friends={friends}
             jamInvites={jamInvites}
+            friendRequests={incoming}
           >
             {children}
           </Shell>
