@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePlayer } from "./PlayerProvider";
+import { useJam } from "./JamProvider";
 import { DeviceMenu } from "./DeviceMenu";
 import { AddToPlaylistButton } from "./AddToPlaylist";
 import { TrackMenu } from "./TrackMenu";
@@ -17,6 +18,7 @@ function Scrubber({
   className,
   accent = "#fff",
   label,
+  disabled = false,
 }: {
   value: number;
   max: number;
@@ -24,6 +26,7 @@ function Scrubber({
   className?: string;
   accent?: string;
   label: string;
+  disabled?: boolean;
 }) {
   const pct = max > 0 ? (value / max) * 100 : 0;
   return (
@@ -35,6 +38,7 @@ function Scrubber({
       step={0.1}
       value={value}
       aria-label={label}
+      disabled={disabled}
       onChange={(e) => onChange(Number(e.target.value))}
       style={
         {
@@ -72,13 +76,33 @@ export function PlayerBar({
   onOpenLyrics: () => void;
 }) {
   const p = usePlayer();
+  const { jam, isHost } = useJam();
   const t = p.current;
+
+  /**
+   * No jam, quem comanda é o host. Para os demais, os controles de
+   * transporte ficam desligados — volume, curtida e letra continuam de
+   * cada um, porque são escolhas que não afetam a sala.
+   */
+  const following = Boolean(jam) && !isHost;
+  const locked = !t || following;
 
   return (
     <footer
-      className="relative z-30 flex h-[88px] items-center gap-4 border-t border-hairline bg-void px-4"
+      className={cx(
+        "relative z-30 flex h-[88px] items-center gap-4 border-t bg-void px-4",
+        following ? "border-dusk/30" : "border-hairline",
+      )}
       aria-label="Player"
     >
+      {/* Um fio na cor do jam: o player não é bem seu agora, e a barra
+          precisa dizer isso antes de a pessoa clicar em pausa em vão. */}
+      {following && (
+        <span
+          className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-dusk to-transparent"
+          aria-hidden
+        />
+      )}
       {/* --- faixa atual --- */}
       <div className="flex min-w-0 flex-1 items-center gap-3 md:w-[30%] md:flex-none">
         {t ? (
@@ -157,7 +181,7 @@ export function PlayerBar({
             onClick={p.toggleShuffle}
             aria-label="Aleatório"
             aria-pressed={p.shuffle}
-            disabled={!t}
+            disabled={locked}
           >
             <I.Shuffle className="h-[18px] w-[18px]" />
           </IconButton>
@@ -165,7 +189,7 @@ export function PlayerBar({
             className="h-9 w-9"
             onClick={p.prev}
             aria-label="Anterior"
-            disabled={!t}
+            disabled={locked}
           >
             <I.Prev className="h-5 w-5" />
           </IconButton>
@@ -173,13 +197,22 @@ export function PlayerBar({
           <button
             type="button"
             onClick={p.toggle}
-            disabled={!t}
-            aria-label={p.playing ? "Pausar" : "Tocar"}
+            disabled={locked}
+            aria-label={
+              following
+                ? "O anfitrião do jam controla a reprodução"
+                : p.playing
+                  ? "Pausar"
+                  : "Tocar"
+            }
+            title={
+              following ? "O anfitrião do jam controla a reprodução" : undefined
+            }
             className={cx(
               "grid h-11 w-11 place-items-center rounded-full border transition-all",
-              t
-                ? "border-ink/70 text-ink hover:scale-[1.06] hover:border-ink"
-                : "border-hairline text-ink-3",
+              locked
+                ? "border-hairline text-ink-3"
+                : "border-ink/70 text-ink hover:scale-[1.06] hover:border-ink",
             )}
           >
             {p.playing ? (
@@ -193,7 +226,7 @@ export function PlayerBar({
             className="h-9 w-9"
             onClick={p.next}
             aria-label="Próxima"
-            disabled={!t}
+            disabled={locked}
           >
             <I.Next className="h-5 w-5" />
           </IconButton>
@@ -204,7 +237,7 @@ export function PlayerBar({
             aria-label={
               p.repeat === "one" ? "Repetir uma" : p.repeat === "all" ? "Repetir tudo" : "Repetir"
             }
-            disabled={!t}
+            disabled={locked}
           >
             <span className="relative">
               <I.Repeat className="h-[18px] w-[18px]" />
@@ -224,7 +257,11 @@ export function PlayerBar({
           <Scrubber
             value={p.time}
             max={p.duration}
-            onChange={p.seek}
+            // Arrastar aqui tiraria só você de hora: o servidor devolveria
+            // a posição da sala no polling seguinte, e o áudio saltaria.
+            onChange={following ? () => {} : p.seek}
+            disabled={locked}
+            accent={following ? "#7b5cf0" : "#fff"}
             label="Progresso da faixa"
           />
           <span className="w-9 text-[11px] tabular-nums text-ink-3">

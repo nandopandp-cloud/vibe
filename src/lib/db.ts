@@ -1,14 +1,23 @@
 import "server-only";
 
 import { neon } from "@neondatabase/serverless";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { connection } from "next/server";
 import { cache } from "react";
 import {
   EMPTY_DB,
   type Artist,
   type Database,
+  type FriendEdge,
+  type Friendship,
+  type HydratedJamInvite,
   type HydratedTrack,
+  type Jam,
+  type JamInvite,
+  type JamMember,
+  type JamParticipant,
+  type JamSnapshot,
+  type PublicUser,
   type Track,
   type User,
 } from "./types";
@@ -33,8 +42,21 @@ if (!DATABASE_URL) {
 
 const sql = neon(DATABASE_URL);
 
-/** Parte do catálogo que mora no documento JSONB. */
-type CatalogDoc = Omit<Database, "users" | "liked" | "following">;
+/**
+ * Parte do catálogo que mora no documento JSONB. Tudo que é por usuário
+ * — curtidas, artistas seguidos, amizades, jams — fica em tabela própria:
+ * são escritas de uma pessoa só, e não podem reescrever o acervo inteiro.
+ */
+type CatalogDoc = Omit<
+  Database,
+  | "users"
+  | "liked"
+  | "following"
+  | "friendships"
+  | "jams"
+  | "jamMembers"
+  | "jamInvites"
+>;
 
 const EMPTY_CATALOG: CatalogDoc = {
   artists: [],
@@ -98,6 +120,79 @@ function ensureSchema(): Promise<void> {
     await sql`
       CREATE INDEX IF NOT EXISTS follows_user_idx
         ON follows (user_id, followed_at)`;
+    // Amigos: uma linha por par, gravada no sentido do pedido. A chave
+    // primária composta já impede pedido duplicado no mesmo sentido; o
+    // sentido inverso é barrado na action, que checa antes de inserir.
+    await sql`
+      CREATE TABLE IF NOT EXISTS friendships (
+        requester_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        addressee_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        status       TEXT NOT NULL CHECK (status IN ('pending', 'accepted')),
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+        accepted_at  TIMESTAMPTZ,
+        PRIMARY KEY (requester_id, addressee_id),
+        CHECK (requester_id <> addressee_id)
+      )`;
+    // As duas pontas consultam "minhas amizades", e cada uma cai num
+    // lado diferente do par — daí dois índices.
+    await sql`
+      CREATE INDEX IF NOT EXISTS friendships_addressee_idx
+        ON friendships (addressee_id, status)`;
+    await sql`
+      CREATE INDEX IF NOT EXISTS friendships_requester_idx
+        ON friendships (requester_id, status)`;
+
+    // Jam: o relógio compartilhado da escuta em conjunto. Fica em tabela
+    // própria, e não no documento do catálogo, porque é escrito a cada
+    // poucos segundos pelo host e lido em polling por todo mundo — passar
+    // isso pelo documento reescreveria o acervo inteiro a cada batida.
+    await sql`
+      CREATE TABLE IF NOT EXISTS jams (
+        id          TEXT PRIMARY KEY,
+        code        TEXT NOT NULL,
+        host_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name        TEXT NOT NULL,
+        queue       JSONB NOT NULL DEFAULT '[]'::jsonb,
+        track_index INT NOT NULL DEFAULT -1,
+        position    DOUBLE PRECISION NOT NULL DEFAULT 0,
+        position_at BIGINT NOT NULL DEFAULT 0,
+        playing     BOOLEAN NOT NULL DEFAULT false,
+        revision    BIGINT NOT NULL DEFAULT 1,
+        ended_at    TIMESTAMPTZ,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`;
+    // Entrar pelo link busca pelo código; só os jams abertos disputam,
+    // então um código só precisa ser único entre os que ainda vivem.
+    await sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS jams_code_open_key
+        ON jams (code) WHERE ended_at IS NULL`;
+    await sql`
+      CREATE TABLE IF NOT EXISTS jam_members (
+        jam_id       TEXT NOT NULL REFERENCES jams(id) ON DELETE CASCADE,
+        user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        joined_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+        last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (jam_id, user_id)
+      )`;
+    // "Em que jam eu estou?" é a pergunta de toda navegação do cliente.
+    await sql`
+      CREATE INDEX IF NOT EXISTS jam_members_user_idx
+        ON jam_members (user_id)`;
+    await sql`
+      CREATE TABLE IF NOT EXISTS jam_invites (
+        id         TEXT PRIMARY KEY,
+        jam_id     TEXT NOT NULL REFERENCES jams(id) ON DELETE CASCADE,
+        from_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        to_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`;
+    // Um convite por pessoa por jam: reconvidar apenas renova a data.
+    await sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS jam_invites_pair_key
+        ON jam_invites (jam_id, to_id)`;
+    await sql`
+      CREATE INDEX IF NOT EXISTS jam_invites_to_idx ON jam_invites (to_id)`;
+
     await sql`
       INSERT INTO catalog (id, data)
       VALUES (1, ${JSON.stringify(EMPTY_CATALOG)}::jsonb)
@@ -136,6 +231,52 @@ const toUser = (r: UserRow): User => ({
   createdAt: new Date(r.created_at).toISOString(),
 });
 
+type FriendshipRow = {
+  requester_id: string;
+  addressee_id: string;
+  status: Friendship["status"];
+  created_at: Date | string;
+  accepted_at: Date | string | null;
+};
+
+const toFriendship = (r: FriendshipRow): Friendship => ({
+  requesterId: r.requester_id,
+  addresseeId: r.addressee_id,
+  status: r.status,
+  createdAt: new Date(r.created_at).toISOString(),
+  acceptedAt: r.accepted_at ? new Date(r.accepted_at).toISOString() : null,
+});
+
+type JamRow = {
+  id: string;
+  code: string;
+  host_id: string;
+  name: string;
+  queue: string[];
+  track_index: number;
+  position: number;
+  position_at: string | number;
+  playing: boolean;
+  ended_at: Date | string | null;
+  created_at: Date | string;
+};
+
+const toJam = (r: JamRow): Jam => ({
+  id: r.id,
+  code: r.code,
+  hostId: r.host_id,
+  name: r.name,
+  queue: r.queue ?? [],
+  index: r.track_index,
+  position: Number(r.position),
+  // `BIGINT` volta como string no driver; sem o Number a conta de deriva
+  // viraria concatenação de texto.
+  positionAt: Number(r.position_at),
+  playing: r.playing,
+  endedAt: r.ended_at ? new Date(r.ended_at).toISOString() : null,
+  createdAt: new Date(r.created_at).toISOString(),
+});
+
 /**
  * Leitura crua do banco. Use `readDb`, que memoiza esta função por
  * requisição — o layout e a página pediam o catálogo várias vezes cada,
@@ -147,13 +288,36 @@ async function loadDb(): Promise<Database> {
   await connection();
   await ensureSchema();
 
-  const [catalogRows, userRows, likeRows, followRows] = await Promise.all([
+  const [
+    catalogRows,
+    userRows,
+    likeRows,
+    followRows,
+    friendRows,
+    jamRows,
+    memberRows,
+    inviteRows,
+  ] = await Promise.all([
     sql`SELECT data FROM catalog WHERE id = 1`,
     sql`SELECT id, email, name, role, password_hash, image, google_id,
                created_at
         FROM users ORDER BY created_at`,
     sql`SELECT user_id, track_id FROM likes ORDER BY liked_at`,
     sql`SELECT user_id, artist_id FROM follows ORDER BY followed_at`,
+    sql`SELECT requester_id, addressee_id, status, created_at, accepted_at
+        FROM friendships ORDER BY created_at`,
+    // Só os jams vivos: um encerrado não interessa a nenhuma tela.
+    sql`SELECT id, code, host_id, name, queue, track_index, position,
+               position_at, playing, ended_at, created_at
+        FROM jams WHERE ended_at IS NULL ORDER BY created_at`,
+    sql`SELECT m.jam_id, m.user_id, m.joined_at, m.last_seen_at
+        FROM jam_members m
+        JOIN jams j ON j.id = m.jam_id AND j.ended_at IS NULL
+        ORDER BY m.joined_at`,
+    sql`SELECT i.id, i.jam_id, i.from_id, i.to_id, i.created_at
+        FROM jam_invites i
+        JOIN jams j ON j.id = i.jam_id AND j.ended_at IS NULL
+        ORDER BY i.created_at DESC`,
   ]);
 
   const doc = (catalogRows[0]?.data ?? EMPTY_CATALOG) as Partial<CatalogDoc>;
@@ -202,6 +366,40 @@ async function loadDb(): Promise<Database> {
     users: (userRows as UserRow[]).map(toUser),
     liked,
     following,
+    friendships: (friendRows as FriendshipRow[]).map(toFriendship),
+    jams: (jamRows as JamRow[]).map(toJam),
+    jamMembers: (
+      memberRows as Array<{
+        jam_id: string;
+        user_id: string;
+        joined_at: Date | string;
+        last_seen_at: Date | string;
+      }>
+    ).map(
+      (r): JamMember => ({
+        jamId: r.jam_id,
+        userId: r.user_id,
+        joinedAt: new Date(r.joined_at).toISOString(),
+        lastSeenAt: new Date(r.last_seen_at).toISOString(),
+      }),
+    ),
+    jamInvites: (
+      inviteRows as Array<{
+        id: string;
+        jam_id: string;
+        from_id: string;
+        to_id: string;
+        created_at: Date | string;
+      }>
+    ).map(
+      (r): JamInvite => ({
+        id: r.id,
+        jamId: r.jam_id,
+        fromId: r.from_id,
+        toId: r.to_id,
+        createdAt: new Date(r.created_at).toISOString(),
+      }),
+    ),
   };
 }
 
@@ -477,4 +675,440 @@ export function artistPlays(db: Database, artistId: string): number {
   return db.tracks
     .filter((t) => t.artistId === artistId)
     .reduce((s, t) => s + t.plays, 0);
+}
+
+/* ------------------------------------------------------------------ */
+/* Amigos                                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A amizade entre duas pessoas, em qualquer sentido que tenha sido pedida.
+ *
+ * O par é guardado uma única vez, na direção do convite, então toda
+ * consulta precisa olhar os dois lados — é o preço de não duplicar a
+ * relação, e vale: assim nunca existem duas linhas discordando.
+ */
+export function friendshipBetween(
+  db: Database,
+  a: string,
+  b: string,
+): Friendship | null {
+  return (
+    db.friendships.find(
+      (f) =>
+        (f.requesterId === a && f.addresseeId === b) ||
+        (f.requesterId === b && f.addresseeId === a),
+    ) ?? null
+  );
+}
+
+/** Ids de quem já é amigo confirmado. */
+export function friendIds(db: Database, userId: string): string[] {
+  return db.friendships
+    .filter(
+      (f) =>
+        f.status === "accepted" &&
+        (f.requesterId === userId || f.addresseeId === userId),
+    )
+    .map((f) => (f.requesterId === userId ? f.addresseeId : f.requesterId));
+}
+
+/**
+ * Todas as relações de uma pessoa, já viradas para o ponto de vista dela:
+ * quem é amigo, quem convidou, quem foi convidado.
+ */
+export function friendEdges(db: Database, userId: string): FriendEdge[] {
+  const byId = new Map(db.users.map((u) => [u.id, u]));
+
+  return db.friendships
+    .filter((f) => f.requesterId === userId || f.addresseeId === userId)
+    .flatMap((f) => {
+      const outgoing = f.requesterId === userId;
+      const other = byId.get(outgoing ? f.addresseeId : f.requesterId);
+      // Conta apagada no meio do caminho: a linha cai junto por FK, mas
+      // uma leitura concorrente ainda pode vê-la.
+      if (!other) return [];
+      return [
+        {
+          user: toPublicUser(other),
+          status: f.status,
+          direction: outgoing ? ("outgoing" as const) : ("incoming" as const),
+          createdAt: f.createdAt,
+        },
+      ];
+    });
+}
+
+/** Versão pública de um usuário — sem hash de senha nem id do provedor. */
+export function toPublicUser(user: User): PublicUser {
+  const { passwordHash: _h, googleId: _g, ...rest } = user;
+  void _h;
+  void _g;
+  return rest;
+}
+
+/* ------------------------------------------------------------------ */
+/* Jam — escrita                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * O jam não passa por `mutate`.
+ *
+ * `mutate` grava o catálogo inteiro e compara snapshots — o certo para
+ * uma curtida, que acontece de vez em quando. O jam é o oposto: o host
+ * reporta a posição a cada poucos segundos e todos leem em polling. Aqui
+ * cada operação é um UPDATE dirigido à linha do jam, o que também evita
+ * que dois participantes enfileirando ao mesmo tempo sobrescrevam um ao
+ * outro com um documento inteiro cada.
+ */
+
+/** Alfabeto sem 0/O e 1/I — o código é ditado em voz alta. */
+const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function randomCode(length = 6): string {
+  const bytes = randomBytes(length);
+  let out = "";
+  for (let i = 0; i < length; i++) {
+    out += CODE_ALPHABET[bytes[i] % CODE_ALPHABET.length];
+  }
+  return out;
+}
+
+/** Cria o jam e já coloca o host dentro dele. */
+export async function insertJam(input: {
+  hostId: string;
+  name: string;
+  queue: string[];
+  index: number;
+}): Promise<Jam> {
+  await ensureSchema();
+
+  // Colisão de código é improvável, mas o índice único só cobre os jams
+  // abertos: em vez de confiar na sorte, tentamos de novo algumas vezes.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const id = newId();
+    const code = randomCode();
+    const rows = await sql`
+      INSERT INTO jams (id, code, host_id, name, queue, track_index,
+                        position, position_at, playing)
+      VALUES (${id}, ${code}, ${input.hostId}, ${input.name},
+              ${JSON.stringify(input.queue)}::jsonb, ${input.index},
+              0, ${Date.now()}, false)
+      ON CONFLICT DO NOTHING
+      RETURNING id, code, host_id, name, queue, track_index, position,
+                position_at, playing, ended_at, created_at`;
+
+    const row = (rows as JamRow[])[0];
+    if (!row) continue; // código repetido — sorteia outro
+
+    await sql`
+      INSERT INTO jam_members (jam_id, user_id)
+      VALUES (${id}, ${input.hostId})
+      ON CONFLICT DO NOTHING`;
+
+    return toJam(row);
+  }
+
+  throw new Error("Não foi possível gerar um código de jam livre.");
+}
+
+/** Um jam aberto pelo id, ou `null` se não existe / já encerrou. */
+export async function findJam(jamId: string): Promise<Jam | null> {
+  await ensureSchema();
+  const rows = await sql`
+    SELECT id, code, host_id, name, queue, track_index, position,
+           position_at, playing, ended_at, created_at
+    FROM jams WHERE id = ${jamId} AND ended_at IS NULL`;
+  const row = (rows as JamRow[])[0];
+  return row ? toJam(row) : null;
+}
+
+/** Um jam aberto pelo código do convite — a porta de entrada do link. */
+export async function findJamByCode(code: string): Promise<Jam | null> {
+  await ensureSchema();
+  const rows = await sql`
+    SELECT id, code, host_id, name, queue, track_index, position,
+           position_at, playing, ended_at, created_at
+    FROM jams WHERE code = ${code.toUpperCase()} AND ended_at IS NULL`;
+  const row = (rows as JamRow[])[0];
+  return row ? toJam(row) : null;
+}
+
+/** O jam em que a pessoa está agora, se estiver em algum. */
+export async function findJamForUser(userId: string): Promise<Jam | null> {
+  await ensureSchema();
+  const rows = await sql`
+    SELECT j.id, j.code, j.host_id, j.name, j.queue, j.track_index,
+           j.position, j.position_at, j.playing, j.ended_at, j.created_at
+    FROM jams j
+    JOIN jam_members m ON m.jam_id = j.id AND m.user_id = ${userId}
+    WHERE j.ended_at IS NULL
+    ORDER BY m.joined_at DESC
+    LIMIT 1`;
+  const row = (rows as JamRow[])[0];
+  return row ? toJam(row) : null;
+}
+
+/** Entra no jam (ou apenas renova a presença, se já estava dentro). */
+export async function joinJam(jamId: string, userId: string): Promise<void> {
+  await ensureSchema();
+  await sql`
+    INSERT INTO jam_members (jam_id, user_id)
+    VALUES (${jamId}, ${userId})
+    ON CONFLICT (jam_id, user_id)
+    DO UPDATE SET last_seen_at = now()`;
+  // Entrar consome o convite: ele já cumpriu o papel.
+  await sql`
+    DELETE FROM jam_invites WHERE jam_id = ${jamId} AND to_id = ${userId}`;
+}
+
+export async function leaveJam(jamId: string, userId: string): Promise<void> {
+  await ensureSchema();
+  await sql`
+    DELETE FROM jam_members
+    WHERE jam_id = ${jamId} AND user_id = ${userId}`;
+}
+
+/** Encerra o jam para todo mundo. Só o host chega aqui. */
+export async function endJam(jamId: string): Promise<void> {
+  await ensureSchema();
+  await sql`
+    UPDATE jams SET ended_at = now(), playing = false
+    WHERE id = ${jamId} AND ended_at IS NULL`;
+}
+
+/** Marca presença — é isso que sustenta o "ouvindo agora". */
+export async function touchJamMember(
+  jamId: string,
+  userId: string,
+): Promise<void> {
+  await ensureSchema();
+  await sql`
+    UPDATE jam_members SET last_seen_at = now()
+    WHERE jam_id = ${jamId} AND user_id = ${userId}`;
+}
+
+/**
+ * O relógio do host: em que faixa, em que segundo, medido quando.
+ *
+ * `revision` só avança quando a faixa muda, porque é ela que faz os
+ * convidados recarregarem o áudio — uma batida de posição a cada quatro
+ * segundos não deveria acordar ninguém.
+ */
+export async function updateJamPlayback(
+  jamId: string,
+  state: { index: number; position: number; positionAt: number; playing: boolean },
+): Promise<void> {
+  await ensureSchema();
+  await sql`
+    UPDATE jams
+    SET track_index = ${state.index},
+        position = ${state.position},
+        position_at = ${state.positionAt},
+        playing = ${state.playing},
+        revision = CASE WHEN track_index <> ${state.index}
+                        THEN revision + 1 ELSE revision END
+    WHERE id = ${jamId} AND ended_at IS NULL`;
+}
+
+/**
+ * Acrescenta faixas ao fim da fila, ignorando as que já estão nela.
+ *
+ * O `jsonb` é montado dentro do próprio UPDATE em vez de ser lido,
+ * alterado em JS e regravado: dois convidados enfileirando no mesmo
+ * segundo têm as duas músicas somadas, e não uma perdida.
+ */
+export async function appendToJamQueue(
+  jamId: string,
+  trackIds: string[],
+): Promise<number> {
+  await ensureSchema();
+  if (trackIds.length === 0) return 0;
+
+  const rows = await sql`
+    UPDATE jams
+    SET queue = queue || (
+          SELECT COALESCE(jsonb_agg(t.value), '[]'::jsonb)
+          FROM jsonb_array_elements(${JSON.stringify(trackIds)}::jsonb) AS t(value)
+          WHERE NOT queue @> jsonb_build_array(t.value)
+        ),
+        revision = revision + 1
+    WHERE id = ${jamId} AND ended_at IS NULL
+    RETURNING jsonb_array_length(queue) AS size`;
+
+  return Number((rows as { size: number }[])[0]?.size ?? 0);
+}
+
+/** Substitui a fila inteira — o host trocou de álbum ou de playlist. */
+export async function replaceJamQueue(
+  jamId: string,
+  trackIds: string[],
+  index: number,
+): Promise<void> {
+  await ensureSchema();
+  await sql`
+    UPDATE jams
+    SET queue = ${JSON.stringify(trackIds)}::jsonb,
+        track_index = ${index},
+        position = 0,
+        position_at = ${Date.now()},
+        playing = true,
+        revision = revision + 1
+    WHERE id = ${jamId} AND ended_at IS NULL`;
+}
+
+/** Tira uma faixa da fila pelo id. Não mexe na que está tocando. */
+export async function removeFromJamQueue(
+  jamId: string,
+  trackId: string,
+): Promise<void> {
+  await ensureSchema();
+  await sql`
+    UPDATE jams
+    SET queue = (
+          SELECT COALESCE(jsonb_agg(value), '[]'::jsonb)
+          FROM jsonb_array_elements(queue) AS value
+          WHERE value <> to_jsonb(${trackId}::text)
+        ),
+        revision = revision + 1
+    WHERE id = ${jamId} AND ended_at IS NULL`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Jam — leitura para a UI                                             */
+/* ------------------------------------------------------------------ */
+
+/** Depois disso sem dar sinal, o participante deixa de contar como online. */
+const PRESENCE_WINDOW_MS = 45_000;
+
+type JamReadRow = JamRow & { revision: string | number };
+
+/**
+ * O snapshot que o cliente consome: a fila hidratada, quem está na sala e
+ * o relógio do host. É lido em polling, então tudo sai em uma consulta
+ * por tabela — nada de N+1 por participante.
+ */
+export async function readJamSnapshot(
+  jamId: string,
+  viewerId: string,
+): Promise<JamSnapshot | null> {
+  await ensureSchema();
+
+  const [jamRows, memberRows] = await Promise.all([
+    sql`SELECT id, code, host_id, name, queue, track_index, position,
+               position_at, playing, revision, ended_at, created_at
+        FROM jams WHERE id = ${jamId}`,
+    sql`SELECT m.user_id, m.joined_at, m.last_seen_at,
+               u.id, u.email, u.name, u.role, u.image, u.created_at
+        FROM jam_members m
+        JOIN users u ON u.id = m.user_id
+        WHERE m.jam_id = ${jamId}
+        ORDER BY m.joined_at`,
+  ]);
+
+  const row = (jamRows as JamReadRow[])[0];
+  if (!row) return null;
+
+  const jam = toJam(row);
+  const db = await readDb();
+
+  // A fila guarda ids; faixas apagadas do catálogo somem daqui em vez de
+  // virarem buracos que travariam o player de todo mundo.
+  const queue = jam.queue
+    .map((id) => db.tracks.find((t) => t.id === id))
+    .filter((t): t is Track => Boolean(t))
+    .map((t) => hydrate(db, t, viewerId));
+
+  const cutoff = Date.now() - PRESENCE_WINDOW_MS;
+  const participants = (
+    memberRows as Array<{
+      user_id: string;
+      joined_at: Date | string;
+      last_seen_at: Date | string;
+      email: string;
+      name: string;
+      role: User["role"];
+      image: string | null;
+      created_at: Date | string;
+    }>
+  ).map(
+    (m): JamParticipant => ({
+      id: m.user_id,
+      email: m.email,
+      name: m.name,
+      role: m.role,
+      image: m.image,
+      createdAt: new Date(m.created_at).toISOString(),
+      isHost: m.user_id === jam.hostId,
+      online: new Date(m.last_seen_at).getTime() >= cutoff,
+      joinedAt: new Date(m.joined_at).toISOString(),
+    }),
+  );
+
+  return {
+    id: jam.id,
+    code: jam.code,
+    name: jam.name,
+    hostId: jam.hostId,
+    isHost: jam.hostId === viewerId,
+    index: jam.index,
+    position: jam.position,
+    positionAt: jam.positionAt,
+    playing: jam.playing,
+    ended: Boolean(jam.endedAt),
+    queue,
+    participants,
+    revision: String(row.revision),
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Jam — convites                                                      */
+/* ------------------------------------------------------------------ */
+
+export async function insertJamInvite(input: {
+  jamId: string;
+  fromId: string;
+  toId: string;
+}): Promise<void> {
+  await ensureSchema();
+  await sql`
+    INSERT INTO jam_invites (id, jam_id, from_id, to_id)
+    VALUES (${newId()}, ${input.jamId}, ${input.fromId}, ${input.toId})
+    ON CONFLICT (jam_id, to_id) DO UPDATE SET created_at = now()`;
+}
+
+export async function deleteJamInvite(
+  jamId: string,
+  toId: string,
+): Promise<void> {
+  await ensureSchema();
+  await sql`
+    DELETE FROM jam_invites WHERE jam_id = ${jamId} AND to_id = ${toId}`;
+}
+
+/** Convites pendentes de uma pessoa, já com jam e remetente resolvidos. */
+export function pendingInvitesFor(
+  db: Database,
+  userId: string,
+): HydratedJamInvite[] {
+  const byId = new Map(db.users.map((u) => [u.id, u]));
+
+  return db.jamInvites
+    .filter((i) => i.toId === userId)
+    .flatMap((invite) => {
+      const jam = db.jams.find((j) => j.id === invite.jamId);
+      const from = byId.get(invite.fromId);
+      if (!jam || !from) return [];
+      return [
+        {
+          id: invite.id,
+          jamId: jam.id,
+          code: jam.code,
+          jamName: jam.name,
+          from: toPublicUser(from),
+          createdAt: invite.createdAt,
+        },
+      ];
+    });
 }

@@ -63,6 +63,24 @@ export function PageHeaderSkeleton() {
   );
 }
 
+/** Lista de pessoas — amigos, participantes de um jam. */
+export function PeopleListSkeleton({ rows = 5 }: { rows?: number }) {
+  return (
+    <div className="space-y-1">
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="flex items-center gap-3 px-3 py-2.5">
+          <Bar className="h-11 w-11 shrink-0 rounded-full" />
+          <div className="min-w-0 flex-1">
+            <Bar className="h-3.5 w-40" />
+            <Bar className="mt-2 h-3 w-52" />
+          </div>
+          <Bar className="h-8 w-24 shrink-0 rounded-full" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Título simples das páginas de listagem. */
 export function TitleSkeleton() {
   return <Bar className="mb-6 h-9 w-56" />;

@@ -3,7 +3,10 @@ import { playlistCovers, readDb } from "@/lib/db";
 import { currentUser } from "@/lib/auth";
 import { PlayerProvider } from "@/components/client/PlayerProvider";
 import { MyPlaylistsProvider } from "@/components/client/AddToPlaylist";
+import { JamProvider } from "@/components/client/JamProvider";
 import { Shell } from "@/components/client/Shell";
+import { readFriends } from "@/lib/friends-actions";
+import { readMyJam, readMyJamInvites } from "@/lib/jam-actions";
 
 export default async function ClientLayout({
   children,
@@ -14,6 +17,14 @@ export default async function ClientLayout({
   // O middleware já barra quem não tem cookie; isto cobre o cookie
   // adulterado ou de um usuário que não existe mais.
   if (!user) redirect("/entrar");
+
+  // As três leituras são independentes entre si e todas já passam pelo
+  // `readDb` memoizado — em paralelo elas custam o mesmo que a mais lenta.
+  const [{ friends }, jamInvites, jam] = await Promise.all([
+    readFriends(),
+    readMyJamInvites(),
+    readMyJam(),
+  ]);
 
   const db = await readDb();
   const byTitle = (a: { title: string }, b: typeof a) =>
@@ -45,9 +56,17 @@ export default async function ClientLayout({
           trackIds: p.trackIds,
         }))}
       >
-        <Shell playlists={editorial} myPlaylists={mine} user={user}>
-          {children}
-        </Shell>
+        <JamProvider initialJam={jam}>
+          <Shell
+            playlists={editorial}
+            myPlaylists={mine}
+            user={user}
+            friends={friends}
+            jamInvites={jamInvites}
+          >
+            {children}
+          </Shell>
+        </JamProvider>
       </MyPlaylistsProvider>
     </PlayerProvider>
   );

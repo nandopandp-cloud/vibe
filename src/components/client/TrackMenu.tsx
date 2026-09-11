@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { usePlayer } from "./PlayerProvider";
 import { useMyPlaylists } from "./AddToPlaylist";
+import { useJam } from "./JamProvider";
 import { createMyPlaylist, toggleMyPlaylistTrack } from "@/lib/actions";
 import { cx } from "@/lib/utils";
 import * as I from "../Icons";
@@ -20,9 +21,12 @@ import type { HydratedTrack } from "@/lib/types";
 export function TrackMenu({ track }: { track: HydratedTrack }) {
   const p = usePlayer();
   const playlists = useMyPlaylists();
+  const { jam, addTrack } = useJam();
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  /** Confirmação curta depois de enfileirar no jam. */
+  const [jamNote, setJamNote] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const ref = useRef<HTMLDivElement>(null);
 
@@ -51,6 +55,7 @@ export function TrackMenu({ track }: { track: HydratedTrack }) {
   const close = () => {
     setOpen(false);
     setCreating(false);
+    setJamNote(null);
   };
 
   const liked = p.isLiked(track.id);
@@ -113,6 +118,30 @@ export function TrackMenu({ track }: { track: HydratedTrack }) {
             </form>
           ) : (
             <>
+              {/* A entrada colaborativa do jam: quem não comanda a sala
+                  ainda escolhe o que vem depois. */}
+              {jam && (
+                <div className="border-b border-hairline p-1.5">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={pending}
+                    onClick={() =>
+                      startTransition(async () => {
+                        const message = await addTrack(track);
+                        setJamNote(message);
+                      })
+                    }
+                    className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-dusk transition-colors hover:bg-dusk/10 disabled:opacity-60"
+                  >
+                    <I.Jam className="h-4 w-4 shrink-0" />
+                    <span className="truncate">
+                      {jamNote ?? `Adicionar ao ${jam.name}`}
+                    </span>
+                  </button>
+                </div>
+              )}
+
               <div className="border-b border-hairline p-1.5">
                 <p className="px-3 pb-1 pt-1.5 text-[11px] font-medium uppercase tracking-wider text-ink-3">
                   Adicionar à playlist

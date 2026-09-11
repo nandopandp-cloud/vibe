@@ -10,7 +10,7 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { promisify } from "node:util";
-import { mutate, readDb } from "./db";
+import { mutate, readDb, toPublicUser } from "./db";
 import type { PublicUser, Role, User } from "./types";
 
 const scrypt = promisify(scryptCb) as (
@@ -110,12 +110,8 @@ export async function endSession(): Promise<void> {
   jar.delete(COOKIE);
 }
 
-export function toPublic(user: User): PublicUser {
-  const { passwordHash: _hash, googleId: _google, ...rest } = user;
-  void _hash;
-  void _google;
-  return rest;
-}
+/** Reexportado do `db`, onde as leituras de amigos e jam também usam. */
+export const toPublic = toPublicUser;
 
 /**
  * Usuário da requisição atual, ou null se não houver sessão válida.

@@ -53,6 +53,18 @@ type PlayerApi = PlayerState & {
   cycleRepeat: () => void;
   playAt: (index: number) => void;
   removeFromQueue: (index: number) => void;
+  /* --- escuta em conjunto (jam) --- */
+  /** Acrescenta faixas ao fim da fila, sem trocar o que está tocando. */
+  enqueue: (tracks: HydratedTrack[]) => void;
+  /** Substitui fila e posição de uma vez — o convidado seguindo o host. */
+  adoptQueue: (tracks: HydratedTrack[], at: number) => void;
+  /** Liga/desliga o play sem alternar, para espelhar um estado externo. */
+  setPlaying: (value: boolean) => void;
+  /**
+   * Modo seguidor: o player para de decidir o que vem depois (autoplay,
+   * avanço no fim da faixa) porque quem decide é o host do jam.
+   */
+  setFollower: (value: boolean) => void;
   like: (trackId: string) => void;
   isLiked: (trackId: string) => boolean;
   /* --- saída de áudio --- */
@@ -129,6 +141,12 @@ export function PlayerProvider({
   const historyRef = useRef<Set<string>>(new Set());
   /** Faixas que falharam em sequência — corta o avanço em cascata. */
   const failuresRef = useRef(0);
+  /**
+   * Seguindo o host de um jam: o player não busca continuação nem avança
+   * sozinho, porque isso tiraria o convidado da sincronia da sala.
+   */
+  const followerRef = useRef(false);
+  const [follower, setFollowerState] = useState(false);
 
   const [queue, setQueue] = useState<HydratedTrack[]>([]);
   const [index, setIndex] = useState(-1);
@@ -239,7 +257,9 @@ export function PlayerProvider({
    */
   const refill = useCallback(async (): Promise<HydratedTrack[]> => {
     const seed = queue[index] ?? queue[queue.length - 1];
-    if (!seed || refillingRef.current) return [];
+    // Num jam, a fila vem do host: inventar continuação aqui faria o
+    // convidado ouvir uma música que ninguém mais na sala está ouvindo.
+    if (!seed || refillingRef.current || followerRef.current) return [];
 
     refillingRef.current = true;
     setLoadingMore(true);
@@ -268,10 +288,11 @@ export function PlayerProvider({
   /** Mantém sempre algumas faixas à frente, para o play nunca engasgar. */
   useEffect(() => {
     if (index < 0 || queue.length === 0) return;
+    if (follower) return; // quem manda na fila é o host do jam
     if (repeat !== "off") return; // repetindo, a fila se basta
     if (queue.length - index - 1 > REFILL_THRESHOLD) return;
     void refill();
-  }, [index, queue.length, repeat, refill]);
+  }, [index, queue.length, repeat, refill, follower]);
 
   /* ---------------- navegação ---------------- */
 
@@ -282,6 +303,13 @@ export function PlayerProvider({
   const advance = useCallback(
     async (auto: boolean) => {
       const el = audioRef.current;
+
+      // Seguindo um jam, o fim da faixa não avança nada: o host vai
+      // mandar a próxima, e pular na frente dele dessincronizaria a sala.
+      if (auto && followerRef.current) {
+        setPlaying(false);
+        return;
+      }
 
       if (auto && repeat === "one" && el) {
         el.currentTime = 0;
@@ -458,6 +486,40 @@ export function PlayerProvider({
       return copy;
     });
     void toggleLike(trackId);
+  }, []);
+
+  /* ---------------- escuta em conjunto (jam) ---------------- */
+
+  /** Põe faixas no fim da fila sem interromper o que está tocando. */
+  const enqueue = useCallback((tracks: HydratedTrack[]) => {
+    if (tracks.length === 0) return;
+    setQueue((q) => {
+      const known = new Set(q.map((t) => t.id));
+      const fresh = tracks.filter((t) => !known.has(t.id));
+      if (fresh.length === 0) return q;
+      for (const t of fresh) historyRef.current.add(t.id);
+      sourceRef.current = [...sourceRef.current, ...fresh];
+      return [...q, ...fresh];
+    });
+  }, []);
+
+  /**
+   * Assume a fila do jam por inteiro.
+   *
+   * Diferente de `playTrack`, não mexe em `playing`: quem chama é o
+   * sincronizador, e é o relógio do host — não o ato de trocar a fila —
+   * que diz se a sala está tocando ou em pausa.
+   */
+  const adoptQueue = useCallback(
+    (tracks: HydratedTrack[], at: number) => {
+      installQueue(tracks, at);
+    },
+    [installQueue],
+  );
+
+  const setFollower = useCallback((value: boolean) => {
+    followerRef.current = value;
+    setFollowerState(value);
   }, []);
 
   /* ---------------- saída de áudio ---------------- */
@@ -643,6 +705,10 @@ export function PlayerProvider({
         setPlaying(true);
       },
       removeFromQueue,
+      enqueue,
+      adoptQueue,
+      setPlaying,
+      setFollower,
       like,
       isLiked: (id: string) => liked.has(id),
       outputs,
@@ -657,6 +723,7 @@ export function PlayerProvider({
       queue, index, current, playing, time, duration, volume, muted, shuffle,
       repeat, liked, loadingMore, playTrack, playShuffled, shuffleAll, toggle,
       next, prev, seek, toggleShuffle, cycleRepeat, removeFromQueue, like,
+      enqueue, adoptQueue, setFollower,
       outputs, outputId, loadOutputs, selectOutput, canRouteAudio,
       remoteState, openRemotePicker,
     ],

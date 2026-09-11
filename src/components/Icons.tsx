@@ -370,3 +370,41 @@ export function EqualizerBars({ className }: { className?: string }) {
     </span>
   );
 }
+
+/** Convidar alguém — a silhueta com um "+" ao lado. */
+export const UserPlus = (p: P) => (
+  <Svg {...p}>
+    <circle {...stroke} cx="10" cy="8.5" r="3.6" />
+    <path {...stroke} d="M3.8 19.5a6.4 6.4 0 0 1 12.4 0" />
+    <path {...stroke} d="M18.5 7.5v5M21 10h-5" />
+  </Svg>
+);
+
+/** Amizade desfeita ou pedido recusado. */
+export const UserMinus = (p: P) => (
+  <Svg {...p}>
+    <circle {...stroke} cx="10" cy="8.5" r="3.6" />
+    <path {...stroke} d="M3.8 19.5a6.4 6.4 0 0 1 12.4 0" />
+    <path {...stroke} d="M21 10h-5" />
+  </Svg>
+);
+
+/**
+ * Jam: ondas saindo de um ponto, como um som que se espalha entre
+ * pessoas. É o ícone da escuta em conjunto em toda a interface.
+ */
+export const Jam = (p: P) => (
+  <Svg {...p}>
+    <circle {...stroke} cx="12" cy="12" r="2.2" />
+    <path {...stroke} d="M8.2 8.2a5.4 5.4 0 0 0 0 7.6M15.8 15.8a5.4 5.4 0 0 0 0-7.6" />
+    <path {...stroke} d="M5.5 5.5a9.2 9.2 0 0 0 0 13M18.5 18.5a9.2 9.2 0 0 0 0-13" />
+  </Svg>
+);
+
+/** Copiar o link do jam. */
+export const Link = (p: P) => (
+  <Svg {...p}>
+    <path {...stroke} d="M10.5 13.5a3.5 3.5 0 0 0 5 0l3-3a3.5 3.5 0 0 0-5-5l-1.4 1.4" />
+    <path {...stroke} d="M13.5 10.5a3.5 3.5 0 0 0-5 0l-3 3a3.5 3.5 0 0 0 5 5l1.4-1.4" />
+  </Svg>
+);

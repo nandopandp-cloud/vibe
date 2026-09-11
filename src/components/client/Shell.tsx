@@ -10,8 +10,15 @@ import { Logo } from "../Brand";
 import { MosaicCover } from "../Cover";
 import { cx } from "@/lib/utils";
 import * as I from "../Icons";
-import type { Playlist, PublicUser } from "@/lib/types";
+import type {
+  FriendEdge,
+  HydratedJamInvite,
+  Playlist,
+  PublicUser,
+} from "@/lib/types";
 import { UserMenu } from "./UserMenu";
+import { JamButton } from "./JamButton";
+import { JamBanner } from "./JamBanner";
 
 const NAV = [
   { href: "/", label: "Início", icon: I.Home, activeIcon: I.HomeFilled },
@@ -24,6 +31,7 @@ const LIBRARY = [
   { href: "/playlists", label: "Playlists", icon: I.Playlist },
   { href: "/artistas", label: "Seus Artistas", icon: I.User },
   { href: "/albuns", label: "Álbuns", icon: I.Album },
+  { href: "/amigos", label: "Amigos", icon: I.Users },
 ];
 
 function NavLink({
@@ -79,11 +87,15 @@ export function Shell({
   playlists,
   myPlaylists,
   user,
+  friends,
+  jamInvites,
 }: {
   children: React.ReactNode;
   playlists: SidebarPlaylist[];
   myPlaylists: SidebarPlaylist[];
   user: PublicUser;
+  friends: FriendEdge[];
+  jamInvites: HydratedJamInvite[];
 }) {
   const pathname = usePathname();
   const [nowPlaying, setNowPlaying] = useState(false);
@@ -241,7 +253,13 @@ export function Shell({
 
         {/* ---------------- conteúdo ---------------- */}
         <main className="relative min-w-0 flex-1 overflow-y-auto bg-canvas">
-          <TopBar onMenu={() => setMenuOpen(true)} user={user} />
+          <TopBar
+            onMenu={() => setMenuOpen(true)}
+            user={user}
+            friends={friends}
+            jamInvites={jamInvites}
+          />
+          <JamBanner friends={friends} />
           {children}
         </main>
       </div>
@@ -259,9 +277,13 @@ export function Shell({
 function TopBar({
   onMenu,
   user,
+  friends,
+  jamInvites,
 }: {
   onMenu: () => void;
   user: PublicUser;
+  friends: FriendEdge[];
+  jamInvites: HydratedJamInvite[];
 }) {
   const [q, setQ] = useState("");
 
@@ -293,6 +315,7 @@ function TopBar({
       </form>
 
       <div className="ml-auto flex items-center gap-3">
+        <JamButton friends={friends} invites={jamInvites} />
         <UserMenu user={user} />
       </div>
     </header>
