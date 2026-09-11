@@ -2,12 +2,16 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { UserAvatar } from "./UserMenu";
 import { acceptFriendRequest, removeFriendship } from "@/lib/friends-actions";
 import { cx } from "@/lib/utils";
 import * as I from "../Icons";
 import type { FriendEdge } from "@/lib/types";
+
+/** Duas caixas de pedidos dizem a mesma coisa? */
+function sameRequests(a: FriendEdge[], b: FriendEdge[]): boolean {
+  return a.length === b.length && a.every((e, i) => e.user.id === b[i].user.id);
+}
 
 /**
  * O sino da barra de cima.
@@ -94,20 +98,26 @@ function RequestRow({
 }
 
 export function Notifications({ requests }: { requests: FriendEdge[] }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const ref = useRef<HTMLDivElement>(null);
 
   /**
-   * Quem já foi respondido nesta sessão.
+   * Os pedidos, mantidos aqui depois do primeiro render do servidor.
    *
-   * A linha some na hora do clique, sem esperar o servidor — mas o id
-   * fica guardado para o render seguinte não trazer o pedido de volta
-   * enquanto a revalidação não chega.
+   * A resposta a um pedido já devolve a caixa nova, então o sino se
+   * atualiza com a própria escrita. Antes ele pedia `router.refresh()`,
+   * que refaz a árvore inteira do layout — catálogo, playlists, jam,
+   * presença — para tirar uma linha de um menu suspenso.
    */
-  const [answered, setAnswered] = useState<Set<string>>(new Set());
-  const visible = requests.filter((r) => !answered.has(r.user.id));
+  const [visible, setVisible] = useState(requests);
+  const [seed, setSeed] = useState(requests);
+  if (requests !== seed) {
+    setSeed(requests);
+    // Por conteúdo: o servidor monta um array novo a cada render, e
+    // adotar por identidade traria de volta o pedido recém-respondido.
+    if (!sameRequests(requests, visible)) setVisible(requests);
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -123,11 +133,21 @@ export function Notifications({ requests }: { requests: FriendEdge[] }) {
     };
   }, [open]);
 
-  const respond = (userId: string, action: () => Promise<unknown>) => {
-    setAnswered((prev) => new Set(prev).add(userId));
+  /**
+   * Responde um pedido.
+   *
+   * A linha some na hora do clique, sem esperar o servidor; quando a
+   * resposta chega, a caixa que ela traz vira a verdade. As duas coisas
+   * juntas dão o clique instantâneo sem deixar a lista mentir se a
+   * escrita falhar.
+   */
+  const respond = (
+    userId: string,
+    action: () => Promise<{ view: { incoming: FriendEdge[] } }>,
+  ) => {
+    setVisible((prev) => prev.filter((r) => r.user.id !== userId));
     startTransition(async () => {
-      await action();
-      router.refresh();
+      setVisible((await action()).view.incoming);
     });
   };
 

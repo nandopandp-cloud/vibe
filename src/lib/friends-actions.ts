@@ -29,8 +29,22 @@ import type { FriendEdge, PublicUser } from "./types";
  * amizades discordando uma da outra.
  */
 
+/**
+ * Invalida só o que a amizade de fato muda.
+ *
+ * Era `revalidatePath("/", "layout")`, que derrubava a árvore inteira: o
+ * layout do cliente relê catálogo, jam, convites e presença, e devolve
+ * objetos novos para todos os providers — que adotam por identidade e
+ * re-renderizam a aplicação inteira duas vezes por clique. Aceitar um
+ * pedido não mexe no catálogo nem no jam; marcar as duas rotas que
+ * mostram amizade deixa o resto do cache de pé.
+ *
+ * As actions ainda devolvem o estado novo junto da resposta, então a tela
+ * não espera por esta revalidação para se atualizar — ela existe para as
+ * *outras* abas e para a próxima navegação.
+ */
 function refresh() {
-  revalidatePath("/", "layout");
+  revalidatePath("/amigos");
 }
 
 function fail(e: unknown): ActionState {
@@ -195,6 +209,39 @@ function relationTo(
 /* ------------------------------------------------------------------ */
 
 /**
+ * O que uma escrita de amizade devolve.
+ *
+ * Junto do resultado vem o estado novo — as três caixas da tela e a
+ * página do diretório que quem chamou estava vendo. Antes a tela pedia
+ * isso numa segunda viagem (`router.refresh()` + uma releitura), e as
+ * duas chegavam depois de o clique já ter parecido travado. Tudo sai da
+ * mesma requisição, que já tem o `readDb` memoizado quente.
+ */
+export type FriendsMutation = ActionState & {
+  view: FriendsView;
+  /** Só quando quem chamou pediu uma página do diretório. */
+  directory?: PeoplePage;
+};
+
+/**
+ * Fecha uma escrita: revalida e lê de volta o estado que a tela precisa.
+ *
+ * `page` é a página do diretório que a tela está mostrando; quem não
+ * mostra diretório nenhum não paga por ele.
+ */
+async function settle(
+  state: ActionState,
+  page?: number,
+): Promise<FriendsMutation> {
+  refresh();
+  const [view, directory] = await Promise.all([
+    readFriends(),
+    page === undefined ? undefined : readPeopleDirectory(page),
+  ]);
+  return { ...state, view, directory };
+}
+
+/**
  * Envia um pedido de amizade.
  *
  * Se a outra pessoa já tinha convidado você, o pedido não vira um segundo
@@ -204,12 +251,13 @@ function relationTo(
  */
 export async function sendFriendRequest(
   targetId: string,
-): Promise<ActionState> {
+  page?: number,
+): Promise<FriendsMutation> {
   try {
     const me = await currentUser();
-    if (!me) return { ok: false, message: "Faça login para continuar." };
+    if (!me) return settle({ ok: false, message: "Faça login para continuar." }, page);
     if (targetId === me.id) {
-      return { ok: false, message: "Você já é sua melhor companhia." };
+      return settle({ ok: false, message: "Você já é sua melhor companhia." }, page);
     }
 
     // O destinatário é capturado dentro da transação e usado depois, já
@@ -246,13 +294,16 @@ export async function sendFriendRequest(
     });
 
     if (result === "missing") {
-      return { ok: false, message: "Pessoa não encontrada." };
+      return settle({ ok: false, message: "Pessoa não encontrada." }, page);
     }
     if (result === "already") {
-      return { ok: false, message: "Vocês já são amigos." };
+      return settle({ ok: false, message: "Vocês já são amigos." }, page);
     }
     if (result === "pending") {
-      return { ok: true, message: "Pedido já enviado — aguardando resposta." };
+      return settle(
+        { ok: true, message: "Pedido já enviado — aguardando resposta." },
+        page,
+      );
     }
 
     /**
@@ -272,14 +323,16 @@ export async function sendFriendRequest(
       await notifyFriendRequest(recipient, me);
     }
 
-    refresh();
-    return {
-      ok: true,
-      message:
-        result === "accepted" ? "Agora vocês são amigos." : "Pedido enviado.",
-    };
+    return settle(
+      {
+        ok: true,
+        message:
+          result === "accepted" ? "Agora vocês são amigos." : "Pedido enviado.",
+      },
+      page,
+    );
   } catch (e) {
-    return fail(e);
+    return settle(fail(e), page);
   }
 }
 
@@ -317,10 +370,11 @@ async function notifyFriendRequest(
 /** Aceita um pedido recebido. Só o destinatário pode aceitar. */
 export async function acceptFriendRequest(
   requesterId: string,
-): Promise<ActionState> {
+  page?: number,
+): Promise<FriendsMutation> {
   try {
     const me = await currentUser();
-    if (!me) return { ok: false, message: "Faça login para continuar." };
+    if (!me) return settle({ ok: false, message: "Faça login para continuar." }, page);
 
     const ok = await mutate((db) => {
       const link = db.friendships.find(
@@ -335,12 +389,13 @@ export async function acceptFriendRequest(
       return true;
     });
 
-    if (!ok) return { ok: false, message: "Este pedido não está mais aqui." };
+    if (!ok) {
+      return settle({ ok: false, message: "Este pedido não está mais aqui." }, page);
+    }
 
-    refresh();
-    return { ok: true, message: "Agora vocês são amigos." };
+    return settle({ ok: true, message: "Agora vocês são amigos." }, page);
   } catch (e) {
-    return fail(e);
+    return settle(fail(e), page);
   }
 }
 
@@ -353,10 +408,11 @@ export async function acceptFriendRequest(
  */
 export async function removeFriendship(
   otherId: string,
-): Promise<ActionState> {
+  page?: number,
+): Promise<FriendsMutation> {
   try {
     const me = await currentUser();
-    if (!me) return { ok: false, message: "Faça login para continuar." };
+    if (!me) return settle({ ok: false, message: "Faça login para continuar." }, page);
 
     const removed = await mutate((db) => {
       const i = db.friendships.findIndex(
@@ -369,20 +425,22 @@ export async function removeFriendship(
       return gone;
     });
 
-    if (!removed) return { ok: false, message: "Nada a desfazer." };
+    if (!removed) return settle({ ok: false, message: "Nada a desfazer." }, page);
 
-    refresh();
-    return {
-      ok: true,
-      message:
-        removed.status === "accepted"
-          ? "Amizade desfeita."
-          : removed.requesterId === me.id
-            ? "Pedido cancelado."
-            : "Pedido recusado.",
-    };
+    return settle(
+      {
+        ok: true,
+        message:
+          removed.status === "accepted"
+            ? "Amizade desfeita."
+            : removed.requesterId === me.id
+              ? "Pedido cancelado."
+              : "Pedido recusado.",
+      },
+      page,
+    );
   } catch (e) {
-    return fail(e);
+    return settle(fail(e), page);
   }
 }
 

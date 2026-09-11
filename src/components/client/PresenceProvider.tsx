@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -79,13 +80,17 @@ export function PresenceProvider({
    * o React chama de derivar de props, e custa apenas o re-render que a
    * novidade exigiria de qualquer jeito.
    *
-   * A comparação é por identidade do array: cada navegação traz um
-   * objeto novo do servidor, e é exatamente isso que queremos adotar.
+   * A comparação é por *conteúdo*, e não por identidade. O servidor monta
+   * este array do zero a cada render do layout, então a identidade muda
+   * mesmo quando ninguém trocou de música — e adotar nessa hora forçava
+   * um segundo render de toda a aplicação a cada revalidação, por nada.
+   * Pior: descartava o resultado do polling, que costuma ser mais novo
+   * que o do render.
    */
   const [adopted, setAdopted] = useState(initial);
   if (initial !== adopted) {
     setAdopted(initial);
-    setFriends(initial);
+    if (!sameActivity(initial, friends)) setFriends(initial);
   }
 
   /** Evita duas leituras concorrentes quando a rede está lenta. */
@@ -164,9 +169,41 @@ export function PresenceProvider({
 
   const onlineCount = friends.filter((f) => f.online).length;
 
+  /**
+   * O valor do contexto, memoizado.
+   *
+   * Este provider re-renderiza a cada batida do polling (de quinze em
+   * quinze segundos) e a cada tique do player. Sem o memo, o objeto era
+   * novo em todas elas, e cada consumidor de `useFriendsActivity` —
+   * incluindo o `Shell` inteiro — re-renderizava junto sem ter o que
+   * mostrar de diferente.
+   */
+  const api = useMemo(
+    () => ({ friends, onlineCount, refresh }),
+    [friends, onlineCount, refresh],
+  );
+
+  return <Ctx.Provider value={api}>{children}</Ctx.Provider>;
+}
+
+/**
+ * Duas leituras de atividade dizem a mesma coisa?
+ *
+ * Compara o que a tela de fato mostra — quem está, se está online e o
+ * que toca. A ordem é estável (o servidor ordena por quem está ativo),
+ * então basta percorrer as duas em paralelo.
+ */
+function sameActivity(a: FriendActivity[], b: FriendActivity[]): boolean {
   return (
-    <Ctx.Provider value={{ friends, onlineCount, refresh }}>
-      {children}
-    </Ctx.Provider>
+    a.length === b.length &&
+    a.every((x, i) => {
+      const y = b[i];
+      return (
+        x.user.id === y.user.id &&
+        x.online === y.online &&
+        x.playing === y.playing &&
+        x.track?.id === y.track?.id
+      );
+    })
   );
 }

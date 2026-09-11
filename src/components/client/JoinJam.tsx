@@ -108,9 +108,11 @@ export function JoinJam({
                 return;
               }
               // O jam vive no layout, então a volta para a home já traz
-              // o player sincronizado e o painel disponível.
+              // o player sincronizado e o painel disponível. O `push`
+              // sozinho basta: ele renderiza o layout do destino, e o
+              // `refresh()` que vinha junto só mandava buscar a mesma
+              // árvore uma segunda vez, atrasando a entrada na sala.
               router.push("/");
-              router.refresh();
             })
           }
           className="mt-7 w-full rounded-full bg-accent px-5 py-3.5 text-sm font-semibold text-accent-ink transition-all hover:scale-[1.02] hover:bg-accent-hover disabled:opacity-60"

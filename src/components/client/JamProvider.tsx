@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -66,6 +67,16 @@ type JamApi = {
   leave: () => Promise<void>;
   /** Força uma leitura agora, sem esperar o próximo polling. */
   sync: (force?: boolean) => void;
+  /**
+   * Entra numa sala que uma action já devolveu pronta.
+   *
+   * É o caminho de "aceitar convite" e de "iniciar jam": a escrita volta
+   * com o snapshot, e adotá-lo aqui troca a sala na hora. Antes isto era
+   * um `router.refresh()`, que refazia a árvore inteira do layout — e o
+   * jam só aparecia depois de o catálogo, as playlists e a presença
+   * terem sido lidos de novo, sem nenhum deles ter mudado.
+   */
+  adopt: (snapshot: JamSnapshot | null) => void;
 };
 
 const OUTSIDE = "Você não está num jam.";
@@ -80,6 +91,7 @@ const Ctx = createContext<JamApi>({
   reorder: async () => OUTSIDE,
   leave: async () => {},
   sync: () => {},
+  adopt: () => {},
 });
 
 export function useJam() {
@@ -99,8 +111,9 @@ export function JamProvider({
 
   /**
    * O servidor manda o jam a cada navegação, e às vezes ele é a novidade:
-   * é assim que "entrar no jam" chega até aqui, já que a entrada acontece
-   * numa outra página e volta com um `router.refresh()`.
+   * é assim que uma sala aberta noutra aba chega até aqui. Entrar por um
+   * convite não passa por este caminho — a action devolve o snapshot e
+   * `adopt` o aplica na hora, sem refazer a árvore do layout.
    *
    * A troca só acontece quando o *jam* muda de identidade — entrar num,
    * sair de um. Dentro do mesmo jam quem manda é o polling, que tem o
@@ -134,20 +147,23 @@ export function JamProvider({
    * participantes) continua sendo o do servidor — só a *ordem* das
    * faixas é que se adianta.
    */
-  const view =
-    jam && pending
-      ? {
-          ...jam,
-          queue: pending,
-          // O índice segue quem está tocando, não o número antigo: a
-          // previsão pode ter tirado faixas de antes dela.
-          index: (() => {
-            const playingId = jam.queue[Math.max(jam.index, 0)]?.id;
-            const at = pending.findIndex((t) => t.id === playingId);
-            return at >= 0 ? at : jam.index;
-          })(),
-        }
-      : jam;
+  const view = useMemo(() => {
+    if (!jam || !pending) return jam;
+    return {
+      ...jam,
+      queue: pending,
+      // O índice segue quem está tocando, não o número antigo: a
+      // previsão pode ter tirado faixas de antes dela.
+      index: (() => {
+        const playingId = jam.queue[Math.max(jam.index, 0)]?.id;
+        const at = pending.findIndex((t) => t.id === playingId);
+        return at >= 0 ? at : jam.index;
+      })(),
+    };
+    // Sem o memo o objeto era novo a cada render enquanto houvesse uma
+    // previsão de fila no ar, e levava junto o valor do contexto — que
+    // então re-renderizava todo consumidor de `useJam` de graça.
+  }, [jam, pending]);
 
   /** Última revisão de fila já aplicada no player do convidado. */
   const appliedRevision = useRef<string | null>(null);
@@ -574,25 +590,60 @@ export function JamProvider({
     if (!jamId) return;
     await leaveCurrentJam(jamId);
     setJam(null);
+    setPending(null);
     appliedRevision.current = null;
-    router.refresh();
-  }, [jamId, router]);
+    // Sair encerra a sala e nada mais do layout muda, então a revalidação
+    // fica só para a próxima navegação: o estado local já conta a verdade.
+  }, [jamId]);
 
-  return (
-    <Ctx.Provider
-      value={{
-        jam: view,
-        isHost,
-        addTrack,
-        playNext,
-        jumpTo,
-        removeTrack,
-        reorder,
-        leave,
-        sync,
-      }}
-    >
-      {children}
-    </Ctx.Provider>
+  /**
+   * Adota uma sala que a action já devolveu montada.
+   *
+   * `syncedWith` acompanha junto, senão o `initialJam` velho — que ainda
+   * é `null` até a próxima navegação — venceria a adoção no render
+   * seguinte e tiraria a pessoa do jam em que ela acabou de entrar.
+   */
+  const adopt = useCallback((snapshot: JamSnapshot | null) => {
+    setJam(snapshot);
+    setPending(null);
+    setSyncedWith(snapshot?.id ?? null);
+    appliedRevision.current = null;
+  }, []);
+
+  /**
+   * O valor do contexto, memoizado.
+   *
+   * Sem isto o objeto era novo a cada render do provider — e como o
+   * provider re-renderiza a cada batida do polling (de três em três
+   * segundos), todo consumidor de `useJam` re-renderizava junto, mesmo
+   * quando nada do que ele mostra tinha mudado.
+   */
+  const api = useMemo(
+    () => ({
+      jam: view,
+      isHost,
+      addTrack,
+      playNext,
+      jumpTo,
+      removeTrack,
+      reorder,
+      leave,
+      sync,
+      adopt,
+    }),
+    [
+      view,
+      isHost,
+      addTrack,
+      playNext,
+      jumpTo,
+      removeTrack,
+      reorder,
+      leave,
+      sync,
+      adopt,
+    ],
   );
+
+  return <Ctx.Provider value={api}>{children}</Ctx.Provider>;
 }

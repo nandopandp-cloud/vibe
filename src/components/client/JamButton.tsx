@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { useJam } from "./JamProvider";
 import { usePlayer } from "./PlayerProvider";
 import { JamPanel } from "./JamPanel";
@@ -9,7 +8,16 @@ import { UserAvatar } from "./UserMenu";
 import { createJam, declineJamInvite, joinJamByCode } from "@/lib/jam-actions";
 import { cx } from "@/lib/utils";
 import * as I from "../Icons";
-import type { FriendEdge, HydratedJamInvite } from "@/lib/types";
+import type {
+  FriendEdge,
+  HydratedJamInvite,
+  JamSnapshot,
+} from "@/lib/types";
+
+/** Duas listas de convite dizem a mesma coisa? */
+function sameInvites(a: HydratedJamInvite[], b: HydratedJamInvite[]): boolean {
+  return a.length === b.length && a.every((inv, i) => inv.id === b[i].id);
+}
 
 /**
  * O acesso ao jam na barra de cima: começa uma sala, mostra a que está
@@ -26,12 +34,17 @@ import type { FriendEdge, HydratedJamInvite } from "@/lib/types";
 
 function InviteList({
   invites,
+  onJoined,
+  onDeclined,
   onDone,
 }: {
   invites: HydratedJamInvite[];
+  /** Entrou: a sala vem pronta na resposta, junto dos convites restantes. */
+  onJoined: (jam: JamSnapshot | null, invites: HydratedJamInvite[]) => void;
+  /** Dispensou: só a lista muda. */
+  onDeclined: (invites: HydratedJamInvite[]) => void;
   onDone: () => void;
 }) {
-  const router = useRouter();
   const [pending, startTransition] = useTransition();
 
   return (
@@ -58,8 +71,8 @@ function InviteList({
               onClick={() =>
                 startTransition(async () => {
                   const res = await joinJamByCode(invite.code);
+                  if (res.ok) onJoined(res.jam, res.invites);
                   onDone();
-                  if (res.ok) router.refresh();
                 })
               }
               className="flex-1 rounded-full bg-accent px-3 py-2 text-xs font-semibold text-accent-ink transition-colors hover:bg-accent-hover disabled:opacity-60"
@@ -71,8 +84,7 @@ function InviteList({
               disabled={pending}
               onClick={() =>
                 startTransition(async () => {
-                  await declineJamInvite(invite.jamId);
-                  router.refresh();
+                  onDeclined((await declineJamInvite(invite.jamId)).invites);
                 })
               }
               className="rounded-full border border-hairline px-3 py-2 text-xs font-medium text-ink-3 transition-colors hover:text-ink disabled:opacity-60"
@@ -92,15 +104,34 @@ function InviteList({
 
 export function JamButton({
   friends,
-  invites,
+  invites: fromServer,
 }: {
   friends: FriendEdge[];
   invites: HydratedJamInvite[];
 }) {
-  const { jam } = useJam();
+  const { jam, adopt } = useJam();
   const player = usePlayer();
-  const router = useRouter();
   const [open, setOpen] = useState(false);
+
+  /**
+   * Os convites, mantidos aqui depois do primeiro render do servidor.
+   *
+   * Antes cada resposta a um convite pedia `router.refresh()` para a
+   * lista encolher — e o refresh refaz a árvore inteira do layout, com
+   * catálogo, playlists e presença, para tirar uma linha de um menu. As
+   * actions agora devolvem a lista que sobrou; o servidor continua
+   * mandando a sua, que é adotada quando de fato traz notícia.
+   */
+  const [invites, setInvites] = useState(fromServer);
+  const [seed, setSeed] = useState(fromServer);
+  if (fromServer !== seed) {
+    setSeed(fromServer);
+    // Por conteúdo, não por identidade: o servidor monta um array novo a
+    // cada render, e adotar por identidade traria de volta o convite que
+    // a pessoa acabou de dispensar.
+    if (!sameInvites(fromServer, invites)) setInvites(fromServer);
+  }
+
   const [panel, setPanel] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -146,7 +177,8 @@ export function JamButton({
         return;
       }
       setOpen(false);
-      router.refresh();
+      adopt(res.jam);
+      setInvites(res.invites);
       setPanel(true);
     });
 
@@ -224,6 +256,11 @@ export function JamButton({
                 </p>
                 <InviteList
                   invites={invites}
+                  onJoined={(joined, rest) => {
+                    adopt(joined);
+                    setInvites(rest);
+                  }}
+                  onDeclined={setInvites}
                   onDone={() => {
                     setOpen(false);
                     setPanel(true);

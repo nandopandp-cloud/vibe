@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { UserAvatar } from "./UserMenu";
 import { FriendsActivityList } from "./FriendActivity";
 import { useFriendsActivity } from "./PresenceProvider";
@@ -11,13 +10,14 @@ import {
   removeFriendship,
   searchPeople,
   sendFriendRequest,
+  type FriendsMutation,
   type FriendsView,
   type PeoplePage,
   type PersonResult,
 } from "@/lib/friends-actions";
 import { cx } from "@/lib/utils";
 import * as I from "../Icons";
-import type { PublicUser } from "@/lib/types";
+import type { FriendEdge, PublicUser } from "@/lib/types";
 
 /** Espera depois da última tecla antes de consultar o servidor. */
 const SEARCH_DEBOUNCE = 300;
@@ -91,12 +91,15 @@ function RelationActions({
   userId,
   relation,
   pending,
+  page,
   act,
 }: {
   userId: string;
   relation: PersonResult["relation"];
   pending: boolean;
-  act: (fn: () => Promise<unknown>) => void;
+  /** A página do diretório a reler junto da escrita, quando há uma. */
+  page?: number;
+  act: (fn: () => Promise<FriendsMutation>) => void;
 }) {
   if (relation === "friends") {
     return (
@@ -112,7 +115,7 @@ function RelationActions({
       <ActionButton
         variant="solid"
         pending={pending}
-        onClick={() => act(() => acceptFriendRequest(userId))}
+        onClick={() => act(() => acceptFriendRequest(userId, page))}
       >
         <I.Check className="h-4 w-4" />
         Aceitar
@@ -125,7 +128,7 @@ function RelationActions({
       <ActionButton
         variant="ghost"
         pending={pending}
-        onClick={() => act(() => removeFriendship(userId))}
+        onClick={() => act(() => removeFriendship(userId, page))}
       >
         Cancelar
       </ActionButton>
@@ -136,7 +139,7 @@ function RelationActions({
     <ActionButton
       variant="solid"
       pending={pending}
-      onClick={() => act(() => sendFriendRequest(userId))}
+      onClick={() => act(() => sendFriendRequest(userId, page))}
     >
       <I.UserPlus className="h-4 w-4" />
       Adicionar
@@ -158,11 +161,47 @@ function relationLabel(
         : fallback;
 }
 
+/**
+ * Reescreve a relação de cada linha a partir das três caixas de amizade.
+ *
+ * A escrita devolve `view` — amigos, recebidos e enviados — e é dela que
+ * sai a relação nova de qualquer pessoa que já esteja na tela. Reler a
+ * busca ou o diretório só para descobrir isso custaria outra viagem, e é
+ * essa viagem que fazia o clique parecer travado.
+ *
+ * Quem não aparece em caixa nenhuma virou `none`: é exatamente o caso de
+ * quem acabou de ser recusado ou removido.
+ */
+function applyRelations<
+  T extends { user: { id: string }; relation: PersonResult["relation"] },
+>(rows: T[], view: FriendsView): T[] {
+  const relations = new Map<string, PersonResult["relation"]>();
+  for (const e of view.friends) relations.set(e.user.id, "friends");
+  for (const e of view.incoming) relations.set(e.user.id, "received");
+  for (const e of view.outgoing) relations.set(e.user.id, "sent");
+
+  let changed = false;
+  const next = rows.map((row) => {
+    const relation = relations.get(row.user.id) ?? "none";
+    if (relation === row.relation) return row;
+    changed = true;
+    return { ...row, relation };
+  });
+
+  // Devolver o mesmo array quando nada mudou evita um re-render inútil
+  // da lista inteira — e é o caso comum de uma ação que não tocou nela.
+  return changed ? next : rows;
+}
+
 /* ------------------------------------------------------------------ */
 /* Busca                                                               */
 /* ------------------------------------------------------------------ */
 
-function SearchPeople({ onChanged }: { onChanged: () => void }) {
+function SearchPeople({
+  onChanged,
+}: {
+  onChanged: (m: FriendsMutation) => void;
+}) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<PersonResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -203,12 +242,20 @@ function SearchPeople({ onChanged }: { onChanged: () => void }) {
   // resultado nenhum, mesmo que o estado ainda guarde o da busca anterior.
   const visible = active ? results : [];
 
-  /** Refaz a busca depois de agir, para o botão refletir a nova relação. */
-  const act = (fn: () => Promise<unknown>) =>
+  /**
+   * Age e atualiza a linha no lugar.
+   *
+   * Antes isto refazia a busca inteira e ainda pedia um `router.refresh()`
+   * — três viagens ao servidor para um clique, e a lista piscava inteira
+   * enquanto a segunda voltava. A escrita já devolve as três caixas de
+   * amizade, e delas dá para deduzir a relação nova de cada pessoa que
+   * está na tela: a linha muda de botão na mesma resposta.
+   */
+  const act = (fn: () => Promise<FriendsMutation>) =>
     startTransition(async () => {
-      await fn();
-      if (active) setResults(await searchPeople(q));
-      onChanged();
+      const m = await fn();
+      setResults((prev) => applyRelations(prev, m.view));
+      onChanged(m);
     });
 
   return (
@@ -292,25 +339,23 @@ function PeopleDirectory({
   onChanged,
 }: {
   initial: PeoplePage;
-  onChanged: () => void;
+  onChanged: (m: FriendsMutation) => void;
 }) {
+  /**
+   * A primeira página do servidor é semente, não correção.
+   *
+   * Antes este componente adotava `initial` sempre que o objeto mudava de
+   * identidade — e como o servidor devolve um objeto novo a cada render,
+   * qualquer revalidação jogava quem estava na página 4 de volta para a 1,
+   * logo depois de ele ter clicado em "adicionar". A página que a pessoa
+   * está vendo é uma escolha dela; quem a atualiza agora é a própria
+   * escrita, que relê a mesma página e devolve junto da resposta.
+   */
   const [data, setData] = useState(initial);
   const [loading, setLoading] = useState(false);
   const [pending, startTransition] = useTransition();
   /** Descarta respostas de páginas que um clique mais novo já venceu. */
   const latest = useRef(0);
-
-  /**
-   * O servidor manda a primeira página a cada navegação. Adotá-la no
-   * render mantém a lista honesta depois de um `router.refresh()` — mas
-   * só quando o objeto é de fato outro, senão qualquer re-render jogaria
-   * a pessoa de volta para a página 1.
-   */
-  const [adopted, setAdopted] = useState(initial);
-  if (initial !== adopted) {
-    setAdopted(initial);
-    setData(initial);
-  }
 
   const go = (page: number) => {
     const ticket = ++latest.current;
@@ -328,17 +373,25 @@ function PeopleDirectory({
       });
   };
 
-  /** Age e relê a mesma página, para o botão refletir a nova relação. */
-  const act = (fn: () => Promise<unknown>) =>
+  /**
+   * Age e adota a página que a própria escrita releu.
+   *
+   * `fn` recebe a página visível e a devolve pronta em `directory`, então
+   * não há segunda viagem: o botão troca de estado na mesma resposta.
+   * Se por algum motivo ela não vier, a relação ainda é deduzida das três
+   * caixas — a lista nunca fica mostrando um botão vencido.
+   */
+  const act = (fn: () => Promise<FriendsMutation>) =>
     startTransition(async () => {
-      await fn();
-      const next = await readPeopleDirectory(data.page);
-      // A relação mudou aqui; a página é a mesma, então não há corrida
-      // com `go` a temer — mas o ticket sobe junto para uma navegação
-      // disparada no meio disto continuar ganhando.
+      const m = await fn();
+      // A página é a mesma, então não há corrida com `go` a temer — mas o
+      // ticket sobe junto para uma navegação disparada no meio disto
+      // continuar ganhando.
       latest.current++;
-      setData(next);
-      onChanged();
+      setData((prev) =>
+        m.directory ?? { ...prev, people: applyRelations(prev.people, m.view) },
+      );
+      onChanged(m);
     });
 
   if (data.total === 0) {
@@ -390,6 +443,7 @@ function PeopleDirectory({
               userId={user.id}
               relation={relation}
               pending={pending}
+              page={data.page}
               act={act}
             />
           </PersonRow>
@@ -454,6 +508,25 @@ function PageButton({
 /* Tela                                                                */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Duas visões dizem a mesma coisa?
+ *
+ * Comparar por identidade não serve: o servidor monta `FriendsView` do
+ * zero a cada render, então o objeto é sempre novo mesmo quando ninguém
+ * ficou nem deixou de ser amigo. A ordem é estável (as três caixas saem
+ * ordenadas por nome), então bastam os ids na ordem em que vêm.
+ */
+function sameView(a: FriendsView, b: FriendsView): boolean {
+  const sameBox = (x: FriendEdge[], y: FriendEdge[]) =>
+    x.length === y.length && x.every((e, i) => e.user.id === y[i].user.id);
+
+  return (
+    sameBox(a.friends, b.friends) &&
+    sameBox(a.incoming, b.incoming) &&
+    sameBox(a.outgoing, b.outgoing)
+  );
+}
+
 export function FriendsScreen({
   initial,
   directory,
@@ -461,21 +534,49 @@ export function FriendsScreen({
   initial: FriendsView;
   directory: PeoplePage;
 }) {
-  const router = useRouter();
   const [pending, startTransition] = useTransition();
   // A lista de presença vem do provider, e não do `initial`: aceitar um
   // pedido precisa fazer a pessoa aparecer já com a música dela, sem
   // esperar a próxima batida do polling.
   const { refresh: refreshActivity } = useFriendsActivity();
 
-  const act = (fn: () => Promise<unknown>) =>
+  /**
+   * As três caixas, mantidas aqui depois do primeiro render do servidor.
+   *
+   * Antes a tela pedia `router.refresh()` a cada clique. Com o
+   * `revalidatePath("/", "layout")` do servidor, isso refazia a árvore
+   * inteira — catálogo, jam, convites, presença — e devolvia objetos
+   * novos aos providers, que adotam por identidade: dois renders da
+   * aplicação toda, e uma ida ao banco, por um botão de "aceitar".
+   *
+   * Agora a escrita devolve o estado novo e ele entra direto no estado
+   * local. A revalidação do servidor continua existindo, mas só para a
+   * próxima navegação — a tela já não espera por ela.
+   */
+  const [view, setView] = useState(initial);
+
+  /**
+   * O render do servidor é semente, mas uma navegação de verdade traz
+   * notícia: comparar o conteúdo, e não a identidade, deixa a tela adotar
+   * o que mudou sem se sobrescrever a cada re-render com dados iguais.
+   */
+  const [seed, setSeed] = useState(initial);
+  if (initial !== seed) {
+    setSeed(initial);
+    if (!sameView(initial, view)) setView(initial);
+  }
+
+  const applied = (m: FriendsMutation) => {
+    setView(m.view);
+    refreshActivity();
+  };
+
+  const act = (fn: () => Promise<FriendsMutation>) =>
     startTransition(async () => {
-      await fn();
-      refreshActivity();
-      router.refresh();
+      applied(await fn());
     });
 
-  const { incoming, outgoing } = initial;
+  const { incoming, outgoing } = view;
 
   return (
     <div className="animate-rise space-y-8 px-6 pb-12 pt-2 md:px-8">
@@ -487,12 +588,7 @@ export function FriendsScreen({
         </p>
       </header>
 
-      <SearchPeople
-        onChanged={() => {
-          refreshActivity();
-          router.refresh();
-        }}
-      />
+      <SearchPeople onChanged={applied} />
 
       {incoming.length > 0 && (
         <section>
@@ -553,13 +649,7 @@ export function FriendsScreen({
         />
       </section>
 
-      <PeopleDirectory
-        initial={directory}
-        onChanged={() => {
-          refreshActivity();
-          router.refresh();
-        }}
-      />
+      <PeopleDirectory initial={directory} onChanged={applied} />
 
       {outgoing.length > 0 && (
         <section>

@@ -52,7 +52,20 @@ const DENY_ANON: ActionState = {
 /* ------------------------------------------------------------------ */
 
 export type JamResult =
-  | { ok: true; jamId: string; code: string }
+  | {
+      ok: true;
+      jamId: string;
+      code: string;
+      /**
+       * A sala já montada, para quem chamou não precisar de uma segunda
+       * viagem só para saber onde entrou. `JamProvider` adota isto direto
+       * — era o que o `router.refresh()` fazia, ao custo de refazer a
+       * árvore inteira do layout.
+       */
+      jam: JamSnapshot | null;
+      /** Os convites que sobraram, já sem o que acabou de ser aceito. */
+      invites: HydratedJamInvite[];
+    }
   | { ok: false; message: string };
 
 /**
@@ -94,7 +107,17 @@ export async function createJam(input: {
       index,
     });
 
-    return { ok: true, jamId: jam.id, code: jam.code };
+    const [snapshot, invites] = await Promise.all([
+      readJamSnapshot(jam.id, me.id),
+      readMyJamInvites(),
+    ]);
+    return {
+      ok: true,
+      jamId: jam.id,
+      code: jam.code,
+      jam: snapshot,
+      invites,
+    };
   } catch (e) {
     const res = fail(e);
     return { ok: false, message: res.message };
@@ -121,7 +144,17 @@ export async function joinJamByCode(code: string): Promise<JamResult> {
     }
 
     await joinJam(jam.id, me.id);
-    return { ok: true, jamId: jam.id, code: jam.code };
+    const [snapshot, invites] = await Promise.all([
+      readJamSnapshot(jam.id, me.id),
+      readMyJamInvites(),
+    ]);
+    return {
+      ok: true,
+      jamId: jam.id,
+      code: jam.code,
+      jam: snapshot,
+      invites,
+    };
   } catch (e) {
     const res = fail(e);
     return { ok: false, message: res.message };
@@ -190,15 +223,28 @@ export async function inviteFriendToJam(
   }
 }
 
-/** Recusa um convite — ele some do sino de quem recebeu. */
-export async function declineJamInvite(jamId: string): Promise<ActionState> {
+/**
+ * Recusa um convite — ele some do sino de quem recebeu.
+ *
+ * Devolve a lista de convites que sobrou. Antes a tela chamava
+ * `router.refresh()` para descobrir isso, e o refresh refaz a árvore
+ * inteira do layout — catálogo, playlists, presença, jam — só para tirar
+ * uma linha de um menu. A lista nova cabe na resposta que já está indo.
+ */
+export async function declineJamInvite(
+  jamId: string,
+): Promise<ActionState & { invites: HydratedJamInvite[] }> {
   try {
     const me = await currentUser();
-    if (!me) return DENY_ANON;
+    if (!me) return { ...DENY_ANON, invites: [] };
     await deleteJamInvite(jamId, me.id);
-    return { ok: true, message: "Convite dispensado." };
+    return {
+      ok: true,
+      message: "Convite dispensado.",
+      invites: await readMyJamInvites(),
+    };
   } catch (e) {
-    return fail(e);
+    return { ...fail(e), invites: await readMyJamInvites() };
   }
 }
 
