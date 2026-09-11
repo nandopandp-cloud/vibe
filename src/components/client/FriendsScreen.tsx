@@ -7,10 +7,12 @@ import { FriendsActivityList } from "./FriendActivity";
 import { useFriendsActivity } from "./PresenceProvider";
 import {
   acceptFriendRequest,
+  readPeopleDirectory,
   removeFriendship,
   searchPeople,
   sendFriendRequest,
   type FriendsView,
+  type PeoplePage,
   type PersonResult,
 } from "@/lib/friends-actions";
 import { cx } from "@/lib/utils";
@@ -29,7 +31,9 @@ function PersonRow({
   subtitle,
   children,
 }: {
-  user: PublicUser;
+  // Só o que a linha desenha. O diretório manda pessoas sem e-mail, e
+  // pedir o objeto inteiro aqui obrigaria a forjar um campo vazio.
+  user: Pick<PublicUser, "name" | "image">;
   subtitle: string;
   children: React.ReactNode;
 }) {
@@ -74,6 +78,84 @@ function ActionButton({
       {children}
     </button>
   );
+}
+
+/**
+ * Os botões que uma relação permite.
+ *
+ * A busca e o diretório mostram as mesmas quatro possibilidades, e duas
+ * cópias desta escada acabariam divergindo — uma ganharia um estado novo
+ * e a outra não. `relation` decide sozinha o que aparece.
+ */
+function RelationActions({
+  userId,
+  relation,
+  pending,
+  act,
+}: {
+  userId: string;
+  relation: PersonResult["relation"];
+  pending: boolean;
+  act: (fn: () => Promise<unknown>) => void;
+}) {
+  if (relation === "friends") {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-accent/10 px-3 py-1.5 text-[11px] font-medium text-accent">
+        <I.Check className="h-3.5 w-3.5" />
+        Amigos
+      </span>
+    );
+  }
+
+  if (relation === "received") {
+    return (
+      <ActionButton
+        variant="solid"
+        pending={pending}
+        onClick={() => act(() => acceptFriendRequest(userId))}
+      >
+        <I.Check className="h-4 w-4" />
+        Aceitar
+      </ActionButton>
+    );
+  }
+
+  if (relation === "sent") {
+    return (
+      <ActionButton
+        variant="ghost"
+        pending={pending}
+        onClick={() => act(() => removeFriendship(userId))}
+      >
+        Cancelar
+      </ActionButton>
+    );
+  }
+
+  return (
+    <ActionButton
+      variant="solid"
+      pending={pending}
+      onClick={() => act(() => sendFriendRequest(userId))}
+    >
+      <I.UserPlus className="h-4 w-4" />
+      Adicionar
+    </ActionButton>
+  );
+}
+
+/** O que a linha diz embaixo do nome, conforme a relação. */
+function relationLabel(
+  relation: PersonResult["relation"],
+  fallback: string,
+): string {
+  return relation === "friends"
+    ? "Já é seu amigo"
+    : relation === "sent"
+      ? "Pedido enviado"
+      : relation === "received"
+        ? "Quer ser seu amigo"
+        : fallback;
 }
 
 /* ------------------------------------------------------------------ */
@@ -162,51 +244,14 @@ function SearchPeople({ onChanged }: { onChanged: () => void }) {
                 <PersonRow
                   key={user.id}
                   user={user}
-                  subtitle={
-                    relation === "friends"
-                      ? "Já é seu amigo"
-                      : relation === "sent"
-                        ? "Pedido enviado"
-                        : relation === "received"
-                          ? "Quer ser seu amigo"
-                          : user.email
-                  }
+                  subtitle={relationLabel(relation, user.email)}
                 >
-                  {relation === "none" && (
-                    <ActionButton
-                      variant="solid"
-                      pending={pending}
-                      onClick={() => act(() => sendFriendRequest(user.id))}
-                    >
-                      <I.UserPlus className="h-4 w-4" />
-                      Adicionar
-                    </ActionButton>
-                  )}
-                  {relation === "received" && (
-                    <ActionButton
-                      variant="solid"
-                      pending={pending}
-                      onClick={() => act(() => acceptFriendRequest(user.id))}
-                    >
-                      <I.Check className="h-4 w-4" />
-                      Aceitar
-                    </ActionButton>
-                  )}
-                  {relation === "sent" && (
-                    <ActionButton
-                      variant="ghost"
-                      pending={pending}
-                      onClick={() => act(() => removeFriendship(user.id))}
-                    >
-                      Cancelar
-                    </ActionButton>
-                  )}
-                  {relation === "friends" && (
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-accent/10 px-3 py-1.5 text-[11px] font-medium text-accent">
-                      <I.Check className="h-3.5 w-3.5" />
-                      Amigos
-                    </span>
-                  )}
+                  <RelationActions
+                    userId={user.id}
+                    relation={relation}
+                    pending={pending}
+                    act={act}
+                  />
                 </PersonRow>
               ))}
             </ul>
@@ -218,10 +263,204 @@ function SearchPeople({ onChanged }: { onChanged: () => void }) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Diretório de pessoas                                                */
+/* ------------------------------------------------------------------ */
+
+/** "entrou em março de 2026" — a data de chegada, por extenso e curta. */
+function joinedLabel(iso: string): string {
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) return "Está na Sona";
+  return `Entrou em ${when.toLocaleDateString("pt-BR", {
+    month: "long",
+    year: "numeric",
+  })}`;
+}
+
+/**
+ * Todo mundo que já entrou, de dez em dez.
+ *
+ * A busca só ajuda quem já sabe o nome de quem procura. Esta lista é
+ * para o resto — quem abre a tela sem ter ninguém em mente e precisa
+ * ver que há gente aqui antes de poder querer adicionar alguém.
+ *
+ * A paginação guarda a página no estado e recarrega ao mudar, em vez de
+ * trazer todo mundo de uma vez e fatiar no cliente: a plataforma cresce,
+ * e a página dez não pode custar o download das nove anteriores.
+ */
+function PeopleDirectory({
+  initial,
+  onChanged,
+}: {
+  initial: PeoplePage;
+  onChanged: () => void;
+}) {
+  const [data, setData] = useState(initial);
+  const [loading, setLoading] = useState(false);
+  const [pending, startTransition] = useTransition();
+  /** Descarta respostas de páginas que um clique mais novo já venceu. */
+  const latest = useRef(0);
+
+  /**
+   * O servidor manda a primeira página a cada navegação. Adotá-la no
+   * render mantém a lista honesta depois de um `router.refresh()` — mas
+   * só quando o objeto é de fato outro, senão qualquer re-render jogaria
+   * a pessoa de volta para a página 1.
+   */
+  const [adopted, setAdopted] = useState(initial);
+  if (initial !== adopted) {
+    setAdopted(initial);
+    setData(initial);
+  }
+
+  const go = (page: number) => {
+    const ticket = ++latest.current;
+    setLoading(true);
+    void readPeopleDirectory(page)
+      .then((next) => {
+        // Uma página lenta não pode sobrescrever outra mais recente que
+        // já voltou — clicar duas vezes em "próxima" deixaria a lista
+        // parada na primeira das duas.
+        if (ticket !== latest.current) return;
+        setData(next);
+      })
+      .finally(() => {
+        if (ticket === latest.current) setLoading(false);
+      });
+  };
+
+  /** Age e relê a mesma página, para o botão refletir a nova relação. */
+  const act = (fn: () => Promise<unknown>) =>
+    startTransition(async () => {
+      await fn();
+      const next = await readPeopleDirectory(data.page);
+      // A relação mudou aqui; a página é a mesma, então não há corrida
+      // com `go` a temer — mas o ticket sobe junto para uma navegação
+      // disparada no meio disto continuar ganhando.
+      latest.current++;
+      setData(next);
+      onChanged();
+    });
+
+  if (data.total === 0) {
+    return (
+      <section>
+        <h2 className="mb-2 text-sm font-semibold text-ink">Pessoas na Sona</h2>
+        <div className="rounded-xl border border-dashed border-hairline px-6 py-10 text-center">
+          <I.Users className="mx-auto h-7 w-7 text-ink-3" />
+          <p className="mt-3 text-sm text-ink-2">
+            Por enquanto você é a única pessoa por aqui.
+          </p>
+          <p className="mt-1 text-xs text-ink-3">
+            Convide alguém — a Sona fica melhor acompanhada.
+          </p>
+        </div>
+      </section>
+    );
+  }
+
+  const first = data.page * data.pageSize + 1;
+  const last = data.page * data.pageSize + data.people.length;
+
+  return (
+    <section>
+      <div className="mb-2 flex items-baseline justify-between gap-3">
+        <h2 className="text-sm font-semibold text-ink">Pessoas na Sona</h2>
+        <p className="shrink-0 text-xs text-ink-3">
+          {data.total === 1
+            ? "1 pessoa"
+            : `${first}–${last} de ${data.total} pessoas`}
+        </p>
+      </div>
+
+      <ul
+        className={cx(
+          "space-y-0.5 transition-opacity",
+          // Some sem sumir: a lista antiga fica legível enquanto a nova
+          // chega, e a altura não colapsa para reaparecer logo em seguida.
+          loading && "opacity-50",
+        )}
+      >
+        {data.people.map(({ user, relation }) => (
+          <PersonRow
+            key={user.id}
+            user={user}
+            subtitle={relationLabel(relation, joinedLabel(user.createdAt))}
+          >
+            <RelationActions
+              userId={user.id}
+              relation={relation}
+              pending={pending}
+              act={act}
+            />
+          </PersonRow>
+        ))}
+      </ul>
+
+      {data.pages > 1 && (
+        <nav
+          className="mt-3 flex items-center justify-center gap-2"
+          aria-label="Paginação de pessoas"
+        >
+          <PageButton
+            onClick={() => go(data.page - 1)}
+            disabled={loading || data.page === 0}
+            label="Página anterior"
+          >
+            <I.ChevronLeft className="h-4 w-4" />
+          </PageButton>
+
+          <span className="px-2 text-xs tabular-nums text-ink-3">
+            {data.page + 1} de {data.pages}
+          </span>
+
+          <PageButton
+            onClick={() => go(data.page + 1)}
+            disabled={loading || data.page >= data.pages - 1}
+            label="Próxima página"
+          >
+            <I.ChevronRight className="h-4 w-4" />
+          </PageButton>
+        </nav>
+      )}
+    </section>
+  );
+}
+
+function PageButton({
+  onClick,
+  disabled,
+  label,
+  children,
+}: {
+  onClick: () => void;
+  disabled: boolean;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      className="grid h-9 w-9 place-items-center rounded-full border border-hairline text-ink-2 transition-colors hover:border-ink/40 hover:text-ink disabled:opacity-35 disabled:hover:border-hairline disabled:hover:text-ink-2"
+    >
+      {children}
+    </button>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Tela                                                                */
 /* ------------------------------------------------------------------ */
 
-export function FriendsScreen({ initial }: { initial: FriendsView }) {
+export function FriendsScreen({
+  initial,
+  directory,
+}: {
+  initial: FriendsView;
+  directory: PeoplePage;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   // A lista de presença vem do provider, e não do `initial`: aceitar um
@@ -313,6 +552,14 @@ export function FriendsScreen({ initial }: { initial: FriendsView }) {
           )}
         />
       </section>
+
+      <PeopleDirectory
+        initial={directory}
+        onChanged={() => {
+          refreshActivity();
+          router.refresh();
+        }}
+      />
 
       {outgoing.length > 0 && (
         <section>

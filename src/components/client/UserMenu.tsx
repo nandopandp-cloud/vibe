@@ -11,12 +11,16 @@ import type { PublicUser } from "@/lib/types";
  * Foto do perfil, com as iniciais como reserva. A imagem do Google pode
  * falhar (link expirado, offline), então o `onError` derruba para as
  * iniciais em vez de deixar um quadrado vazio.
+ *
+ * Pede só o nome e a foto, e não um `PublicUser` inteiro: o diretório de
+ * pessoas monta usuários sem e-mail de propósito, e exigir o campo aqui
+ * obrigaria a inventar um vazio só para satisfazer o tipo.
  */
 export function UserAvatar({
   user,
   className,
 }: {
-  user: PublicUser;
+  user: Pick<PublicUser, "name" | "image">;
   className?: string;
 }) {
   const [broken, setBroken] = useState(false);

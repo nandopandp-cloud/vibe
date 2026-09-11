@@ -72,18 +72,122 @@ export async function searchPeople(query: string): Promise<PersonResult[]> {
     return foldText(u.name).includes(needle) || foldText(u.email) === needle;
   });
 
-  return matches.slice(0, 12).map((u) => {
-    const link = friendshipBetween(db, me.id, u.id);
-    const relation: PersonResult["relation"] = !link
-      ? "none"
-      : link.status === "accepted"
-        ? "friends"
-        : link.requesterId === me.id
-          ? "sent"
-          : "received";
+  return matches.slice(0, 12).map((u) => ({
+    user: toPublicUser(u),
+    relation: relationTo(db, me.id, u.id),
+  }));
+}
 
-    return { user: toPublicUser(u), relation };
-  });
+/* ------------------------------------------------------------------ */
+/* Diretório — todo mundo que já entrou                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Quantas pessoas por página.
+ *
+ * Fica privado porque um arquivo `"use server"` só exporta funções
+ * assíncronas — o tamanho viaja dentro de `PeoplePage`, que é onde a
+ * tela precisa dele para contar "11–20 de 34".
+ */
+const DIRECTORY_PAGE_SIZE = 10;
+
+/**
+ * Uma pessoa no diretório.
+ *
+ * O e-mail sai do tipo, e não é apenas apagado do valor: a tela não tem
+ * como mostrar por engano um campo que não existe, e quem ler o tipo
+ * descobre a regra sem precisar achar o comentário.
+ */
+export type DirectoryPerson = {
+  user: Omit<PublicUser, "email">;
+  relation: PersonResult["relation"];
+};
+
+/** Uma página do diretório, com o bastante para desenhar os controles. */
+export type PeoplePage = {
+  people: DirectoryPerson[];
+  /** Página pedida, começando em 0 — devolvida já corrigida. */
+  page: number;
+  /** Quantas páginas existem ao todo. */
+  pages: number;
+  /** Total de pessoas na plataforma, tirando você. */
+  total: number;
+  /** Tamanho da página, para a tela contar "11–20 de 34" sem adivinhar. */
+  pageSize: number;
+};
+
+/**
+ * Todo mundo que já entrou na plataforma, de dez em dez.
+ *
+ * A busca resolve quem você já sabe procurar; isto resolve quem você
+ * ainda não sabe que existe — e é por isso que a lista não pode começar
+ * vazia esperando um nome digitado.
+ *
+ * A ordem é a de chegada, mais novos primeiro. Ordenar por nome
+ * enterraria quem acabou de criar a conta no meio do alfabeto, que é
+ * justamente quem tem mais chance de estar sendo procurado agora.
+ *
+ * O e-mail não vem junto. Na busca ele aparece porque quem digitou o
+ * endereço inteiro já o conhecia; aqui a lista chega sem ninguém ter
+ * perguntado nada, e devolver o endereço de todo mundo transformaria a
+ * tela de amigos num catálogo de e-mails. A data de entrada basta para
+ * distinguir dois homônimos.
+ */
+export async function readPeopleDirectory(
+  page = 0,
+): Promise<PeoplePage> {
+  const me = await currentUser();
+  if (!me) {
+    return {
+      people: [],
+      page: 0,
+      pages: 0,
+      total: 0,
+      pageSize: DIRECTORY_PAGE_SIZE,
+    };
+  }
+
+  const db = await readDb();
+
+  // Mais recentes primeiro: `db.users` chega ordenado por `created_at`
+  // crescente, então basta virar.
+  const others = db.users.filter((u) => u.id !== me.id).reverse();
+
+  const total = others.length;
+  const pages = Math.max(1, Math.ceil(total / DIRECTORY_PAGE_SIZE));
+  // A página é corrigida aqui, e não no cliente: apagar uma conta pode
+  // encolher a lista embaixo de quem está na última página, e pedir uma
+  // que não existe mais deve trazer a última — nunca uma tela em branco.
+  const at = Math.min(Math.max(page, 0), pages - 1);
+  const start = at * DIRECTORY_PAGE_SIZE;
+
+  const people = others
+    .slice(start, start + DIRECTORY_PAGE_SIZE)
+    .map((u): DirectoryPerson => {
+      const { email: _email, ...user } = toPublicUser(u);
+      void _email;
+      return { user, relation: relationTo(db, me.id, u.id) };
+    });
+
+  return { people, page: at, pages, total, pageSize: DIRECTORY_PAGE_SIZE };
+}
+
+/**
+ * Em que pé você está com alguém.
+ *
+ * Vive à parte porque a busca e o diretório fazem a mesma pergunta, e
+ * duas cópias da mesma escada de `if` acabariam discordando no dia em
+ * que um estado novo aparecesse.
+ */
+function relationTo(
+  db: Awaited<ReturnType<typeof readDb>>,
+  meId: string,
+  otherId: string,
+): PersonResult["relation"] {
+  const link = friendshipBetween(db, meId, otherId);
+  if (!link) return "none";
+  if (link.status === "accepted") return "friends";
+  return link.requesterId === meId ? "sent" : "received";
 }
 
 /* ------------------------------------------------------------------ */
